@@ -212,7 +212,8 @@ export class MessageProcessor {
           try {
             const jsonData = element.attrs?.data || element.attrs?.content || ''
             if (jsonData) {
-              content += `[JSON: ${typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData)}]`
+              const parsedContent = this.parseJsonMessage(jsonData)
+              content += parsedContent
             } else {
               content += '[JSON消息]'
             }
@@ -391,5 +392,62 @@ export class MessageProcessor {
     
     const processed = this.processElements(elements)
     return processed.content.trim() === ''
+  }
+
+  /**
+   * 解析JSON消息内容，特别处理QQ小程序分享卡片
+   */
+  private parseJsonMessage(jsonData: any): string {
+    try {
+      let data: any
+      
+      // 如果是字符串，尝试解析为JSON
+      if (typeof jsonData === 'string') {
+        data = JSON.parse(jsonData)
+      } else {
+        data = jsonData
+      }
+
+      // 检查是否为QQ小程序分享
+      if (data.app === 'com.tencent.miniapp_01' && data.meta?.detail_1) {
+        const detail = data.meta.detail_1
+        const appName = detail.title || '小程序'
+        const desc = detail.desc || ''
+        const url = detail.qqdocurl || detail.url || ''
+        
+        // 构建友好的分享卡片描述
+        let shareContent = `[${appName}分享]`
+        if (desc) {
+          shareContent += ` ${desc}`
+        }
+        if (url) {
+          shareContent += ` ${url}`
+        }
+        
+        return shareContent
+      }
+      
+      // 检查是否为其他类型的分享卡片
+      if (data.prompt) {
+        return `[分享] ${data.prompt}`
+      }
+      
+      // 尝试提取其他有用信息
+      if (data.title || data.desc || data.url) {
+        let shareContent = '[分享]'
+        if (data.title) shareContent += ` ${data.title}`
+        if (data.desc) shareContent += ` ${data.desc}`
+        if (data.url) shareContent += ` ${data.url}`
+        return shareContent
+      }
+
+      // 如果无法识别，返回简化的JSON表示
+      return `[JSON: ${JSON.stringify(data).substring(0, 100)}...]`
+      
+    } catch (error) {
+      // 解析失败，返回原始内容的简化版本
+      const jsonStr = typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData)
+      return `[JSON: ${jsonStr.substring(0, 100)}...]`
+    }
   }
 } 

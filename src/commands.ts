@@ -418,7 +418,7 @@ export class CommandHandler {
 
       // 发送最终结果（如果没有使用合并转发）
       if (responseMessage.trim()) {
-        await this.sendMessage(session, [h.text(responseMessage)])
+      await this.sendMessage(session, [h.text(responseMessage)])
       }
 
     } catch (error: any) {
