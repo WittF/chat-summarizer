@@ -144,6 +144,12 @@ export class MarkdownToImageService {
         height: 1.2em;
         vertical-align: -0.125em;
         margin: 0 0.05em;
+        object-fit: contain;
+      }
+      
+      /* 确保emoji文本有正确的字体回退 */
+      .emoji-text, span:has(> .emoji) {
+        font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Twemoji Mozilla', 'Noto Color Emoji', 'Android Emoji', 'EmojiOne Color', 'EmojiOne', 'Symbola', 'Noto Emoji', 'Noto Sans Emoji', 'NotoColorEmoji', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft Yahei', sans-serif;
       }
     `
   }
@@ -155,226 +161,71 @@ export class MarkdownToImageService {
     // 使用CDN emoji图片
     const emojiBaseUrl = 'https://fastly.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/'
     
-    // 常见emoji映射表，转为十六进制编码
-    const emojiMap: { [key: string]: string } = {
-      '🤖': '1f916',
-      '😀': '1f600',
-      '😃': '1f603',
-      '😄': '1f604',
-      '😁': '1f601',
-      '😆': '1f606',
-      '😅': '1f605',
-      '😂': '1f602',
-      '🤣': '1f923',
-      '😊': '1f60a',
-      '🙂': '1f642',
-      '😉': '1f609',
-      '😍': '1f60d',
-      '🥰': '1f970',
-      '😘': '1f618',
-      '😋': '1f60b',
-      '😛': '1f61b',
-      '😝': '1f61d',
-      '😜': '1f61c',
-      '🤪': '1f929',
-      '🤨': '1f928',
-      '🧐': '1f9d0',
-      '🤓': '1f913',
-      '😎': '1f60e',
-      '🤩': '1f929',
-      '🥳': '1f973',
-      '😏': '1f60f',
-      '😒': '1f612',
-      '😞': '1f61e',
-      '😔': '1f614',
-      '😟': '1f61f',
-      '😕': '1f615',
-      '🙁': '1f641',
-      '😣': '1f623',
-      '😖': '1f616',
-      '😫': '1f62b',
-      '😩': '1f629',
-      '🥺': '1f97a',
-      '😢': '1f622',
-      '😭': '1f62d',
-      '😤': '1f624',
-      '😠': '1f620',
-      '😡': '1f621',
-      '🤬': '1f92c',
-      '🤯': '1f92f',
-      '😱': '1f631',
-      '😨': '1f628',
-      '😰': '1f630',
-      '😥': '1f625',
-      '😓': '1f613',
-      '🤗': '1f917',
-      '🤔': '1f914',
-      '🤭': '1f92d',
-      '🤫': '1f92b',
-      '🤥': '1f925',
-      '😶': '1f636',
-      '😐': '1f610',
-      '😑': '1f611',
-      '😬': '1f62c',
-      '🙄': '1f644',
-      '😯': '1f62f',
-      '😦': '1f626',
-      '😧': '1f627',
-      '😮': '1f62e',
-      '😲': '1f632',
-      '🥱': '1f971',
-      '😴': '1f634',
-      '🤤': '1f924',
-      '😪': '1f62a',
-      '😵': '1f635',
-      '🤐': '1f910',
-      '🥴': '1f974',
-      '🤢': '1f922',
-      '🤮': '1f92e',
-      '🤧': '1f927',
-      '😷': '1f637',
-      '🤒': '1f912',
-      '🤕': '1f915',
-      '🤑': '1f911',
-      '🤠': '1f920',
-      '😈': '1f608',
-      '👿': '1f47f',
-      '👹': '1f479',
-      '👺': '1f47a',
-      '🤡': '1f921',
-      '💩': '1f4a9',
-      '👻': '1f47b',
-      '💀': '1f480',
-      '☠️': '2620',
-      '👽': '1f47d',
-      '👾': '1f47e',
-      '🎉': '1f389',
-      '🎊': '1f38a',
-      '🎈': '1f388',
-      '🎁': '1f381',
-      '🎀': '1f380',
-      '🎂': '1f382',
-      '🍰': '1f370',
-      '🧁': '1f9c1',
-      '🍭': '1f36d',
-      '🍬': '1f36c',
-      '🍫': '1f36b',
-      '🍩': '1f369',
-      '🍪': '1f36a',
-      '🥛': '1f95b',
-      '☕': '2615',
-      '🍵': '1f375',
-      '🍺': '1f37a',
-      '🍻': '1f37b',
-      '🥂': '1f942',
-      '🍷': '1f377',
-      '🍾': '1f37e',
-      '🍸': '1f378',
-      '🍹': '1f379',
-      '🍼': '1f37c',
-      '🥃': '1f943',
-      '🔥': '1f525',
-      '💧': '1f4a7',
-      '🌊': '1f30a',
-      '❄️': '2744',
-      '⭐': '2b50',
-      '🌟': '1f31f',
-      '✨': '2728',
-      '🌈': '1f308',
-      '☀️': '2600',
-      '🌤️': '1f324',
-      '⛅': '26c5',
-      '🌥️': '1f325',
-      '☁️': '2601',
-      '🌦️': '1f326',
-      '🌧️': '1f327',
-      '⛈️': '26c8',
-      '🌩️': '1f329',
-      '🌨️': '1f328',
-      '❤️': '2764',
-      '🧡': '1f9e1',
-      '💛': '1f49b',
-      '💚': '1f49a',
-      '💙': '1f499',
-      '💜': '1f49c',
-      '🤍': '1f90d',
-      '🖤': '1f5a4',
-      '🤎': '1f90e',
-      '💔': '1f494',
-      '❣️': '2763',
-      '💕': '1f495',
-      '💞': '1f49e',
-      '💓': '1f493',
-      '💗': '1f497',
-      '💖': '1f496',
-      '💘': '1f498',
-      '💝': '1f49d',
-      '💟': '1f49f',
-      '🎯': '1f3af',
-      '🔫': '1f52b',
-      '🎱': '1f3b1',
-      '🎮': '1f3ae',
-      '🕹️': '1f579',
-      '🎰': '1f3b0',
-      '🎲': '1f3b2',
-      '🧩': '1f9e9',
-      '🧸': '1f9f8',
-      '🎭': '1f3ad',
-      '🎨': '1f3a8',
-      '👓': '1f453',
-      '🕶️': '1f576',
-      '🥽': '1f97d',
-      '🥼': '1f97c',
-      '🦺': '1f9ba',
-      '👔': '1f454',
-      '👕': '1f455',
-      '👖': '1f456',
-      '🧣': '1f9e3',
-      '🧤': '1f9e4',
-      '🧥': '1f9e5',
-      '🧦': '1f9e6',
-      '👗': '1f457',
-      '👘': '1f458',
-      '🥻': '1f97b',
-      '🩱': '1fa71',
-      '🩲': '1fa72',
-      '🩳': '1fa73',
-      '👙': '1f459',
-      '👚': '1f45a',
-      '👛': '1f45b',
-      '👜': '1f45c',
-      '👝': '1f45d',
-      '🛍️': '1f6cd',
-      '🎒': '1f392',
-      '🩴': '1fa74',
-      '👞': '1f45e',
-      '👟': '1f45f',
-      '🥾': '1f97e',
-      '🥿': '1f97f',
-      '👠': '1f460',
-      '👡': '1f461',
-      '🩰': '1fa70',
-      '👢': '1f462',
-      '👑': '1f451',
-      '👒': '1f452',
-      '🎩': '1f3a9',
-      '🎓': '1f393',
-      '🧢': '1f9e2',
-      '💄': '1f484',
-      '💍': '1f48d',
-      '💎': '1f48e'
-    }
+    // 使用更完整的Unicode范围匹配emoji
+    const emojiRegex = /(?:[\u2600-\u26FF\u2700-\u27BF]|(?:\uD83C[\uDF00-\uDFFF])|(?:\uD83D[\uDC00-\uDE4F])|(?:\uD83D[\uDE80-\uDEFF])|(?:\uD83E[\uDD00-\uDDFF])|(?:\uD83E[\uDE00-\uDEFF])|(?:\uD83C[\uDDE6-\uDDFF])|(?:\uD83C[\uDDF0-\uDDFF])|[\u23E9-\u23F3\u23F8-\u23FA\u2600-\u2604\u260E\u2611\u2614-\u2615\u2618\u261D\u2620\u2622-\u2623\u2626\u262A\u262E-\u262F\u2638-\u263A\u2640\u2642\u2648-\u2653\u2660\u2663\u2665-\u2666\u2668\u267B\u267F\u2692-\u2697\u2699\u269B-\u269C\u26A0-\u26A1\u26AA-\u26AB\u26B0-\u26B1\u26BD-\u26BE\u26C4-\u26C5\u26C8\u26CE-\u26CF\u26D1\u26D3-\u26D4\u26E9-\u26EA\u26F0-\u26F5\u26F7-\u26FA\u26FD\u2702\u2705\u2708-\u270D\u270F\u2712\u2714\u2716\u271D\u2721\u2728\u2733-\u2734\u2744\u2747\u274C\u274E\u2753-\u2755\u2757\u2763-\u2764\u2795-\u2797\u27A1\u27B0\u27BF\u2934-\u2935\u2B05-\u2B07\u2B1B-\u2B1C\u2B50\u2B55\u3030\u303D\u3297\u3299]|(?:\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62(?:\uDB40\uDC77\uDB40\uDC6C\uDB40\uDC73|\uDB40\uDC73\uDB40\uDC63\uDB40\uDC74|\uDB40\uDC65\uDB40\uDC6E\uDB40\uDC67)\uDB40\uDC7F))/g
     
-    this.logger.info(`🖼️ 使用CDN emoji图片，共${Object.keys(emojiMap).length}个emoji可转换`)
+    let convertedCount = 0
+    const result = html.replace(emojiRegex, (match) => {
+      try {
+        // 将emoji转换为Unicode码点
+        const codePoint = this.getEmojiCodePoint(match)
+                 if (codePoint) {
+           convertedCount++
+           return `<img class="emoji" src="${emojiBaseUrl}${codePoint}.png" alt="${match}" loading="eager" onerror="this.outerHTML='<span class=\\"emoji-text\\">${match}</span>'">`
+         }
+        return match
+      } catch (error) {
+        this.logger.debug(`无法转换emoji: ${match}`, error)
+        return match
+      }
+    })
     
-    // 替换emoji为图片标签
-    let result = html
-    for (const [emoji, unicode] of Object.entries(emojiMap)) {
-      const imgTag = `<img class="emoji" src="${emojiBaseUrl}${unicode}.png" alt="${emoji}" loading="eager">`
-      result = result.replace(new RegExp(emoji.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), imgTag)
-    }
+    this.logger.info(`🖼️ 动态转换了${convertedCount}个emoji为CDN图片`)
     
     return result
+  }
+  
+  /**
+   * 获取emoji的Unicode码点
+   */
+  private getEmojiCodePoint(emoji: string): string | null {
+    try {
+      const codePoints = []
+      let i = 0
+      
+      while (i < emoji.length) {
+        const code = emoji.codePointAt(i)
+        if (code) {
+          // 过滤掉变体选择器（U+FE0F）和其他修饰符
+          if (code !== 0xFE0F && code !== 0x200D) {
+            codePoints.push(code.toString(16))
+          }
+          
+          // 如果是代理对，跳过下一个字符
+          if (code > 0xFFFF) {
+            i += 2
+          } else {
+            i += 1
+          }
+        } else {
+          i += 1
+        }
+      }
+      
+      // 对于某些特殊emoji，可能需要特殊处理
+      let result = codePoints.join('-')
+      
+      // 处理一些特殊情况，如带有肤色修饰符的emoji
+      if (result.includes('1f3fb') || result.includes('1f3fc') || result.includes('1f3fd') || result.includes('1f3fe') || result.includes('1f3ff')) {
+        // 对于带有肤色修饰符的emoji，保留第一个码点
+        result = codePoints[0]
+      }
+      
+      return result.length > 0 ? result : null
+    } catch (error) {
+      this.logger.debug(`获取emoji码点失败: ${emoji}`, error)
+      return null
+    }
   }
 
   /**
