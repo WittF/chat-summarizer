@@ -33,7 +33,7 @@ export class CommandHandler {
     statusText += '⚙️ 配置状态:\n'
     statusText += `• 聊天记录: ${this.config.chatLog.enabled ? '✅ 已启用' : '❌ 已禁用'}\n`
     statusText += `• S3存储: ${this.config.s3.enabled ? '✅ 已启用' : '❌ 已禁用'}\n`
-    statusText += `• 图片上传: ${this.config.imageUpload.enabled ? '✅ 已启用' : '❌ 已禁用'}\n`
+    statusText += `• 图片上传: ✅ 已启用\n`
     statusText += `• 调试模式: ${this.config.debug ? '✅ 已启用' : '❌ 已禁用'}\n`
     
     // S3配置详情

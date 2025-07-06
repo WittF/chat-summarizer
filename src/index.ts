@@ -1,12 +1,19 @@
-import { Context, Session, Element } from 'koishi'
+import { Context, Session } from 'koishi'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { Config, ChatRecord, ImageRecord, FileRecord } from './types'
-import { name, inject, ConfigSchema } from './config'
+import { name, inject, ConfigSchema, CONSTANTS } from './config'
 import { extendDatabase, DatabaseOperations } from './database'
 import { LoggerService, S3Service, MessageProcessorService } from './services'
 import { CommandHandler } from './commands'
 import { S3Uploader } from './s3-uploader'
+import { 
+  formatDateInUTC8, 
+  getDateStringInUTC8, 
+  getCurrentTimeInUTC8,
+  safeJsonParse,
+  safeJsonStringify
+} from './utils'
 
 export { name, inject }
 export { ConfigSchema as Config }
@@ -81,7 +88,7 @@ export function apply(ctx: Context, config: Config) {
       return content
     }
 
-    const quoteAuthor = session.quote.user?.name || session.quote.user?.username || '某用户'
+    const quoteAuthor = session.quote.user?.name || session.quote.user?.username || CONSTANTS.DEFAULTS.QUOTE_AUTHOR_FALLBACK
     const quoteContent = session.quote.content || ''
     const quoteId = session.quote.messageId || ''
     
@@ -102,18 +109,19 @@ export function apply(ctx: Context, config: Config) {
 
   // URL替换函数
   const replaceImageUrl = (originalUrl: string): string => {
-    // 替换 "cn-sy1.rains3.com/qqmsg" 为 "qqmsg.pan.wittf.ink"
-    if (originalUrl.includes('cn-sy1.rains3.com/qqmsg')) {
-      return originalUrl.replace('cn-sy1.rains3.com/qqmsg', 'qqmsg.pan.wittf.ink')
+    // 替换域名
+    if (originalUrl.includes(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN)) {
+      return originalUrl.replace(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN, CONSTANTS.URL_REPLACEMENTS.NEW_DOMAIN)
     }
     return originalUrl
   }
 
+
+
   // 保存消息到本地文件
   const saveMessageToLocalFile = async (record: ChatRecord): Promise<void> => {
     try {
-      const date = new Date(record.timestamp)
-      const dateStr = date.toISOString().split('T')[0]
+      const dateStr = getDateStringInUTC8(record.timestamp)
       const groupKey = record.guildId || 'private'
       
       const logDir = getStorageDir('data')
@@ -122,7 +130,7 @@ export function apply(ctx: Context, config: Config) {
       
       const logEntry = {
         timestamp: record.timestamp,
-        time: date.toLocaleString('zh-CN'),
+        time: formatDateInUTC8(record.timestamp),
         messageId: record.messageId,
         guildId: record.guildId,
         channelId: record.channelId,
@@ -130,12 +138,12 @@ export function apply(ctx: Context, config: Config) {
         username: record.username,
         content: record.content,
         messageType: record.messageType,
-        imageUrls: record.imageUrls ? JSON.parse(record.imageUrls) : [],
-        fileUrls: record.fileUrls ? JSON.parse(record.fileUrls) : [],
-        originalElements: JSON.parse(record.originalElements)
+        imageUrls: safeJsonParse(record.imageUrls, []),
+        fileUrls: safeJsonParse(record.fileUrls, []),
+        originalElements: safeJsonParse(record.originalElements, [])
       }
       
-      const logLine = JSON.stringify(logEntry) + '\n'
+      const logLine = safeJsonStringify(logEntry) + '\n'
       await fs.appendFile(filePath, logLine, 'utf8')
       
       // 只在调试模式下记录详细信息
@@ -297,11 +305,11 @@ export function apply(ctx: Context, config: Config) {
         }
 
         if (successfulImageUploads.length > 0) {
-          updateData.imageUrls = JSON.stringify(successfulImageUploads)
+          updateData.imageUrls = safeJsonStringify(successfulImageUploads)
         }
 
         if (successfulFileUploads.length > 0) {
-          updateData.fileUrls = JSON.stringify(successfulFileUploads)
+          updateData.fileUrls = safeJsonStringify(successfulFileUploads)
         }
 
         await dbOps.updateChatRecord(messageId, updateData)
@@ -310,8 +318,8 @@ export function apply(ctx: Context, config: Config) {
         await updateLocalFileRecord({
           ...originalRecord,
           content: updatedContent,
-          imageUrls: successfulImageUploads.length > 0 ? JSON.stringify(successfulImageUploads) : originalRecord.imageUrls,
-          fileUrls: successfulFileUploads.length > 0 ? JSON.stringify(successfulFileUploads) : originalRecord.fileUrls
+          imageUrls: successfulImageUploads.length > 0 ? safeJsonStringify(successfulImageUploads) : originalRecord.imageUrls,
+          fileUrls: successfulFileUploads.length > 0 ? safeJsonStringify(successfulFileUploads) : originalRecord.fileUrls
         })
       }
     } catch (error: any) {
@@ -322,8 +330,7 @@ export function apply(ctx: Context, config: Config) {
   // 更新本地文件记录
   const updateLocalFileRecord = async (record: ChatRecord): Promise<void> => {
     try {
-      const date = new Date(record.timestamp)
-      const dateStr = date.toISOString().split('T')[0]
+      const dateStr = getDateStringInUTC8(record.timestamp)
       const groupKey = record.guildId || 'private'
       const fileName = `${groupKey}_${dateStr}.jsonl`
       const filePath = path.join(getStorageDir('data'), fileName)
@@ -338,15 +345,15 @@ export function apply(ctx: Context, config: Config) {
       const lines = existingContent.split('\n').filter(line => line.trim())
       const updatedLines = lines.map(line => {
         try {
-                  const lineRecord = JSON.parse(line)
-        if (lineRecord.messageId === record.messageId) {
-          return JSON.stringify({
-            ...lineRecord,
-            content: record.content,
-            imageUrls: record.imageUrls ? JSON.parse(record.imageUrls) : [],
-            fileUrls: record.fileUrls ? JSON.parse(record.fileUrls) : []
-          })
-        }
+          const lineRecord = safeJsonParse(line, { messageId: '' })
+          if (lineRecord.messageId === record.messageId) {
+            return safeJsonStringify({
+              ...lineRecord,
+              content: record.content,
+              imageUrls: safeJsonParse(record.imageUrls, []),
+              fileUrls: safeJsonParse(record.fileUrls, [])
+            })
+          }
           return line
         } catch (error) {
           return line
@@ -365,9 +372,9 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 获取下次执行时间
+  // 获取下次执行时间（基于UTC+8时区）
   const getNextExecutionTime = (targetTime: string): Date => {
-    const now = new Date()
+    const now = getCurrentTimeInUTC8()
     const [hours, minutes] = targetTime.split(':').map(Number)
     
     const next = new Date(now)
@@ -385,7 +392,7 @@ export function apply(ctx: Context, config: Config) {
     try {
       // 根据保留天数配置决定是否删除文件
       if (config.chatLog.retentionDays > 0) {
-        const retentionDate = new Date()
+        const retentionDate = getCurrentTimeInUTC8()
         retentionDate.setDate(retentionDate.getDate() - config.chatLog.retentionDays)
         
         if (uploadDate <= retentionDate) {
@@ -427,7 +434,8 @@ export function apply(ctx: Context, config: Config) {
 
       // 如果没有任何记录，说明该日期该群组没有消息，跳过
       if (totalRecords.length === 0) {
-        logger.debug(`群组 ${groupKey} 在 ${date.toISOString().split('T')[0]} 没有消息记录`)
+        const dateStr = getDateStringInUTC8(date.getTime())
+        logger.debug(`群组 ${groupKey} 在 ${dateStr} 没有消息记录`)
         return true // 返回true表示"跳过上传"
       }
 
@@ -440,10 +448,11 @@ export function apply(ctx: Context, config: Config) {
 
       const isFullyUploaded = unuploadedRecords.length === 0
       
+      const dateStr = getDateStringInUTC8(date.getTime())
       if (isFullyUploaded) {
-        logger.debug(`群组 ${groupKey} 在 ${date.toISOString().split('T')[0]} 的 ${totalRecords.length} 条记录已全部上传`)
+        logger.debug(`群组 ${groupKey} 在 ${dateStr} 的 ${totalRecords.length} 条记录已全部上传`)
       } else {
-        logger.debug(`群组 ${groupKey} 在 ${date.toISOString().split('T')[0]} 还有 ${unuploadedRecords.length}/${totalRecords.length} 条未上传记录`)
+        logger.debug(`群组 ${groupKey} 在 ${dateStr} 还有 ${unuploadedRecords.length}/${totalRecords.length} 条未上传记录`)
       }
 
       return isFullyUploaded
@@ -476,7 +485,8 @@ export function apply(ctx: Context, config: Config) {
         
         // 只在调试模式下记录详细信息
         if (config.debug) {
-          logger.info(`已标记 ${records.length} 条记录为已上传 (群组: ${groupKey}, 日期: ${date.toISOString().split('T')[0]})`)
+          const dateStr = getDateStringInUTC8(date.getTime())
+          logger.info(`已标记 ${records.length} 条记录为已上传 (群组: ${groupKey}, 日期: ${dateStr})`)
         }
       }
     } catch (error: any) {
@@ -498,10 +508,10 @@ export function apply(ctx: Context, config: Config) {
     try {
       logger.info('开始执行聊天记录自动上传')
 
-      // 获取昨天的日期字符串
-      const yesterday = new Date()
+      // 获取昨天的日期字符串（基于UTC+8时区）
+      const yesterday = getCurrentTimeInUTC8()
       yesterday.setDate(yesterday.getDate() - 1)
-      const dateStr = yesterday.toISOString().split('T')[0] // YYYY-MM-DD
+      const dateStr = getDateStringInUTC8(yesterday.getTime())
 
       // 扫描本地data目录
       const dataDir = getStorageDir('data')
@@ -714,11 +724,11 @@ export function apply(ctx: Context, config: Config) {
         userId,
         username,
         content,
-        originalElements: JSON.stringify(session.elements),
+        originalElements: safeJsonStringify(session.elements),
         timestamp,
         messageType: processed.messageType,
-        imageUrls: processed.imageUrls.length > 0 ? JSON.stringify(processed.imageUrls) : undefined,
-        fileUrls: processed.fileUrls.length > 0 ? JSON.stringify(processed.fileUrls) : undefined,
+        imageUrls: processed.imageUrls.length > 0 ? safeJsonStringify(processed.imageUrls) : undefined,
+        fileUrls: processed.fileUrls.length > 0 ? safeJsonStringify(processed.fileUrls) : undefined,
         isUploaded: false
       }
 

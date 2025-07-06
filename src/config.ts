@@ -46,11 +46,7 @@ export const ConfigSchema: Schema<Config> = Schema.object({
       .min(1).max(365).default(3)
   }).description('聊天记录配置'),
   
-  imageUpload: Schema.object({
-    enabled: Schema.boolean()
-      .description('是否启用图片自动上传到S3（需要先启用S3存储）')
-      .default(true)
-  }).description('图片上传配置'),
+
   
   monitor: Schema.object({
     enabledGroups: Schema.array(Schema.string())
@@ -73,6 +69,20 @@ export const ConfigSchema: Schema<Config> = Schema.object({
 export const CONSTANTS = {
   STORAGE_DIRS: {
     DATA: 'data'
+  },
+  URL_REPLACEMENTS: {
+    OLD_DOMAIN: 'cn-sy1.rains3.com/qqmsg',
+    NEW_DOMAIN: 'qqmsg.pan.wittf.ink'
+  },
+  FILE_SETTINGS: {
+    ENCODING: 'utf8' as const,
+    LINE_SEPARATOR: '\n',
+    JSON_EXTENSION: '.jsonl'
+  },
+  DEFAULTS: {
+    UNKNOWN_USER: '未知用户',
+    PRIVATE_GROUP: 'private',
+    QUOTE_AUTHOR_FALLBACK: '某用户'
   },
   S3_REGION: 'auto',
   MAX_CONTENT_PREVIEW: 50,

@@ -18,11 +18,6 @@ export interface Config {
     retentionDays: number    // 本地文件保留天数
   }
   
-  // 图片处理配置
-  imageUpload: {
-    enabled: boolean         // 是否启用图片上传到S3
-  }
-  
   // 监控配置
   monitor: {
     enabledGroups: string[]  // 监控的群组ID列表（空则监控所有群组）

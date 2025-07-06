@@ -1,8 +1,9 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import axios from 'axios'
+import { getDateStringInUTC8, handleError, delay } from './utils'
 
 export interface S3Config {
   region: string
@@ -172,26 +173,9 @@ export class S3Uploader {
 
       return await this.uploadBuffer(buffer, key, contentType)
     } catch (error: any) {
-      // 提供更详细的错误信息
-      let errorMessage = '下载或上传图片失败'
-      
-      if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED') {
-        errorMessage = '网络连接中断'
-      } else if (error.code === 'ENOTFOUND') {
-        errorMessage = '无法解析图片地址'
-      } else if (error.response?.status === 404) {
-        errorMessage = '图片不存在（404）'
-      } else if (error.response?.status === 403) {
-        errorMessage = '图片访问被拒绝（403）'
-      } else if (error.response?.status >= 400) {
-        errorMessage = `图片下载失败（HTTP ${error.response.status}）`
-      } else if (error.message) {
-        errorMessage = error.message
-      }
-
       return {
         success: false,
-        error: errorMessage
+        error: handleError(error, '下载或上传图片失败')
       }
     }
   }
@@ -241,26 +225,9 @@ export class S3Uploader {
 
       return await this.uploadBuffer(buffer, key, contentType)
     } catch (error: any) {
-      // 提供更详细的错误信息
-      let errorMessage = '下载或上传文件失败'
-      
-      if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED') {
-        errorMessage = '网络连接中断'
-      } else if (error.code === 'ENOTFOUND') {
-        errorMessage = '无法解析文件地址'
-      } else if (error.response?.status === 404) {
-        errorMessage = '文件不存在（404）'
-      } else if (error.response?.status === 403) {
-        errorMessage = '文件访问被拒绝（403）'
-      } else if (error.response?.status >= 400) {
-        errorMessage = `文件下载失败（HTTP ${error.response.status}）`
-      } else if (error.message) {
-        errorMessage = error.message
-      }
-
       return {
         success: false,
-        error: errorMessage
+        error: handleError(error, '下载或上传文件失败')
       }
     }
   }
@@ -282,7 +249,7 @@ export class S3Uploader {
       
       // 避免请求过于频繁
       if (files.length > 1) {
-        await new Promise(resolve => setTimeout(resolve, 100))
+        await delay(100)
       }
     }
 
@@ -438,15 +405,14 @@ export class S3Uploader {
    */
   public static generateImageKey(messageId: string, originalUrl: string, guildId?: string, index: number = 0): string {
     const extension = S3Uploader.getImageExtension(originalUrl)
-    const date = new Date()
-    const dateStr = date.toISOString().split('T')[0] // YYYY-MM-DD
-    const timestamp = Date.now()
+    const now = Date.now()
+    const dateStr = getDateStringInUTC8(now)
     const suffix = index > 0 ? `_${index}` : ''
     
     // 构建路径：images/日期/群号(或private)/消息ID_时间戳.扩展名
     const groupPath = guildId || 'private'
     
-    return `images/${dateStr}/${groupPath}/${messageId}_${timestamp}${suffix}.${extension}`
+    return `images/${dateStr}/${groupPath}/${messageId}_${now}${suffix}.${extension}`
   }
 
   /**
@@ -454,23 +420,22 @@ export class S3Uploader {
    */
   public static generateFileKey(messageId: string, originalUrl: string, fileName?: string, guildId?: string, index: number = 0): string {
     const extension = S3Uploader.getFileExtension(originalUrl, fileName)
-    const date = new Date()
-    const dateStr = date.toISOString().split('T')[0] // YYYY-MM-DD
-    const timestamp = Date.now()
+    const now = Date.now()
+    const dateStr = getDateStringInUTC8(now)
     const suffix = index > 0 ? `_${index}` : ''
     
     // 构建路径：files/日期/群号(或private)/消息ID_时间戳.扩展名
     const groupPath = guildId || 'private'
     
-    return `files/${dateStr}/${groupPath}/${messageId}_${timestamp}${suffix}.${extension}`
+    return `files/${dateStr}/${groupPath}/${messageId}_${now}${suffix}.${extension}`
   }
 
   /**
    * 生成聊天记录文件的S3键名（JSON格式）
    */
   public static generateChatLogKey(date: Date, guildId?: string): string {
-    const dateStr = date.toISOString().split('T')[0] // YYYY-MM-DD
     const timestamp = date.getTime()
+    const dateStr = getDateStringInUTC8(timestamp)
     
     if (guildId) {
       return `chat-logs/${dateStr}/guild_${guildId}_${timestamp}.json`
@@ -524,6 +489,8 @@ export class S3Uploader {
     return allowedTypes.map(type => type.toLowerCase()).includes(extension)
   }
 
+
+
   /**
    * 测试S3连接
    */
@@ -531,7 +498,8 @@ export class S3Uploader {
     try {
       // 尝试上传一个小的测试文件
       const testContent = 'koishi-chat-summarizer-test'
-      const testKey = `test/connection_test_${Date.now()}.txt`
+      const now = Date.now()
+      const testKey = `test/connection_test_${now}.txt`
       
       const result = await this.uploadText(testContent, testKey)
       
