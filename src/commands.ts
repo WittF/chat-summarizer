@@ -61,9 +61,7 @@ export class CommandHandler {
     // 存储路径
     statusText += '\n📁 存储路径:\n'
     statusText += `• 数据目录: ${this.getStorageDir('data')}\n`
-    statusText += `• 缓存目录: ${this.getStorageDir('cache')}\n`
-    statusText += `• 临时目录: ${this.getStorageDir('temp')}\n`
-    
+
     // 下次上传时间
     if (this.config.chatLog.enabled && this.s3Uploader) {
       const nextUpload = this.getNextExecutionTime(this.config.chatLog.autoUploadTime)

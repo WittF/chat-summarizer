@@ -72,9 +72,7 @@ export const ConfigSchema: Schema<Config> = Schema.object({
 // 常量定义
 export const CONSTANTS = {
   STORAGE_DIRS: {
-    DATA: 'data',
-    CACHE: 'cache', 
-    TEMP: 'temp'
+    DATA: 'data'
   },
   S3_REGION: 'auto',
   MAX_CONTENT_PREVIEW: 50,

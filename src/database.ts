@@ -1,5 +1,5 @@
 import { Context } from 'koishi'
-import { ChatRecord, ImageRecord, PluginStats } from './types'
+import { ChatRecord, ImageRecord, FileRecord, PluginStats } from './types'
 
 // 扩展数据库模型
 export function extendDatabase(ctx: Context) {
@@ -15,6 +15,7 @@ export function extendDatabase(ctx: Context) {
     timestamp: 'unsigned',
     messageType: 'string',
     imageUrls: 'text',
+    fileUrls: 'text',
     uploadedAt: 'unsigned',
     isUploaded: 'boolean'
   }, {
@@ -26,6 +27,19 @@ export function extendDatabase(ctx: Context) {
     originalUrl: 'string',
     s3Url: 'string',
     s3Key: 'string',
+    fileSize: 'unsigned',
+    uploadedAt: 'unsigned',
+    messageId: 'string'
+  }, {
+    autoInc: true,
+  })
+
+  ctx.model.extend('file_records', {
+    id: 'unsigned',
+    originalUrl: 'string',
+    s3Url: 'string',
+    s3Key: 'string',
+    fileName: 'string',
     fileSize: 'unsigned',
     uploadedAt: 'unsigned',
     messageId: 'string'
@@ -48,6 +62,12 @@ export class DatabaseOperations {
   async createImageRecord(record: Omit<ImageRecord, 'id'>): Promise<ImageRecord> {
     const result = await this.ctx.database.create('image_records', record)
     return (result as any)[0] as ImageRecord
+  }
+
+  // 创建文件记录
+  async createFileRecord(record: Omit<FileRecord, 'id'>): Promise<FileRecord> {
+    const result = await this.ctx.database.create('file_records', record)
+    return (result as any)[0] as FileRecord
   }
 
   // 更新聊天记录

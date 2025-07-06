@@ -47,6 +47,7 @@ export interface ChatRecord {
   timestamp: number        // 消息时间戳
   messageType: 'text' | 'image' | 'mixed' | 'other' // 消息类型
   imageUrls?: string       // 图片URL列表（JSON格式）
+  fileUrls?: string        // 文件URL列表（JSON格式）
   uploadedAt?: number      // 上传到S3的时间戳
   isUploaded: boolean      // 是否已上传到S3
 }
@@ -57,6 +58,18 @@ export interface ImageRecord {
   originalUrl: string      // 原始图片URL
   s3Url: string           // S3存储URL
   s3Key: string           // S3存储键
+  fileSize: number        // 文件大小（字节）
+  uploadedAt: number      // 上传时间戳
+  messageId: string       // 关联的消息ID
+}
+
+// 文件上传记录
+export interface FileRecord {
+  id?: number              // 数据库自增ID
+  originalUrl: string      // 原始文件URL
+  s3Url: string           // S3存储URL
+  s3Key: string           // S3存储键
+  fileName: string        // 文件名
   fileSize: number        // 文件大小（字节）
   uploadedAt: number      // 上传时间戳
   messageId: string       // 关联的消息ID
@@ -75,5 +88,6 @@ declare module 'koishi' {
   interface Tables {
     chat_records: ChatRecord
     image_records: ImageRecord
+    file_records: FileRecord
   }
 } 

@@ -197,6 +197,75 @@ export class S3Uploader {
   }
 
   /**
+   * 从URL下载文件并上传到S3
+   */
+  public async uploadFileFromUrl(
+    fileUrl: string,
+    key: string,
+    fileName?: string,
+    maxSize?: number
+  ): Promise<UploadResult> {
+    try {
+      // 使用axios下载文件，确保对各种URL格式的兼容性
+      const downloadConfig = {
+        responseType: 'arraybuffer' as const,
+        timeout: 120000, // 2分钟超时（文件可能比图片大）
+        maxContentLength: maxSize || 100 * 1024 * 1024, // 默认100MB限制
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      }
+
+      const response = await axios.get(fileUrl, downloadConfig)
+
+      if (!response.data) {
+        return {
+          success: false,
+          error: '下载文件失败：响应数据为空'
+        }
+      }
+
+      // 将ArrayBuffer转换为Buffer
+      const buffer = Buffer.from(response.data)
+      
+      // 检查文件大小
+      if (maxSize && buffer.length > maxSize) {
+        return {
+          success: false,
+          error: `文件过大: ${Math.round(buffer.length / 1024 / 1024)}MB > ${Math.round(maxSize / 1024 / 1024)}MB`
+        }
+      }
+
+      // 确定内容类型
+      const contentType = this.getFileContentType(fileUrl, fileName, response.headers?.['content-type'])
+
+      return await this.uploadBuffer(buffer, key, contentType)
+    } catch (error: any) {
+      // 提供更详细的错误信息
+      let errorMessage = '下载或上传文件失败'
+      
+      if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED') {
+        errorMessage = '网络连接中断'
+      } else if (error.code === 'ENOTFOUND') {
+        errorMessage = '无法解析文件地址'
+      } else if (error.response?.status === 404) {
+        errorMessage = '文件不存在（404）'
+      } else if (error.response?.status === 403) {
+        errorMessage = '文件访问被拒绝（403）'
+      } else if (error.response?.status >= 400) {
+        errorMessage = `文件下载失败（HTTP ${error.response.status}）`
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+
+      return {
+        success: false,
+        error: errorMessage
+      }
+    }
+  }
+
+  /**
    * 批量上传聊天记录文件
    */
   public async uploadChatLogFiles(
@@ -243,6 +312,7 @@ export class S3Uploader {
   private getContentTypeFromExtension(ext: string): string {
     const extension = ext.toLowerCase()
     const mimeTypes: Record<string, string> = {
+      // 图片类型
       '.jpg': 'image/jpeg',
       '.jpeg': 'image/jpeg',
       '.png': 'image/png',
@@ -250,10 +320,65 @@ export class S3Uploader {
       '.webp': 'image/webp',
       '.bmp': 'image/bmp',
       '.svg': 'image/svg+xml',
+      '.ico': 'image/x-icon',
+      '.tiff': 'image/tiff',
+      '.tif': 'image/tiff',
+      
+      // 文本类型
       '.txt': 'text/plain; charset=utf-8',
       '.json': 'application/json; charset=utf-8',
       '.md': 'text/markdown; charset=utf-8',
-      '.log': 'text/plain; charset=utf-8'
+      '.log': 'text/plain; charset=utf-8',
+      '.xml': 'application/xml; charset=utf-8',
+      '.yml': 'text/plain; charset=utf-8',
+      '.yaml': 'text/plain; charset=utf-8',
+      '.ini': 'text/plain; charset=utf-8',
+      '.cfg': 'text/plain; charset=utf-8',
+      '.conf': 'text/plain; charset=utf-8',
+      
+      // 文档类型
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xls': 'application/vnd.ms-excel',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.ppt': 'application/vnd.ms-powerpoint',
+      '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      '.rtf': 'application/rtf',
+      
+      // 压缩文件
+      '.zip': 'application/zip',
+      '.rar': 'application/x-rar-compressed',
+      '.7z': 'application/x-7z-compressed',
+      '.tar': 'application/x-tar',
+      '.gz': 'application/gzip',
+      '.bz2': 'application/x-bzip2',
+      
+      // 音频类型
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.flac': 'audio/flac',
+      '.ogg': 'audio/ogg',
+      '.m4a': 'audio/mp4',
+      '.aac': 'audio/aac',
+      '.wma': 'audio/x-ms-wma',
+      
+      // 视频类型
+      '.mp4': 'video/mp4',
+      '.avi': 'video/x-msvideo',
+      '.mkv': 'video/x-matroska',
+      '.mov': 'video/quicktime',
+      '.wmv': 'video/x-ms-wmv',
+      '.flv': 'video/x-flv',
+      '.webm': 'video/webm',
+      '.m4v': 'video/mp4',
+      
+      // 程序文件
+      '.exe': 'application/x-msdownload',
+      '.msi': 'application/x-msdownload',
+      '.dmg': 'application/x-apple-diskimage',
+      '.deb': 'application/x-debian-package',
+      '.rpm': 'application/x-rpm'
     }
 
     return mimeTypes[extension] || 'application/octet-stream'
@@ -282,6 +407,33 @@ export class S3Uploader {
   }
 
   /**
+   * 获取文件内容类型
+   */
+  private getFileContentType(url: string, fileName?: string, headerContentType?: string): string {
+    // 优先使用响应头中的内容类型
+    if (headerContentType && headerContentType !== 'application/octet-stream') {
+      return headerContentType
+    }
+
+    // 从文件名推断
+    if (fileName) {
+      const extension = path.extname(fileName).toLowerCase()
+      if (extension) {
+        return this.getContentTypeFromExtension(extension)
+      }
+    }
+
+    // 从URL推断
+    const extension = url.toLowerCase().match(/\.([a-z0-9]+)(?:\?|$)/)?.[1]
+    if (extension) {
+      return this.getContentTypeFromExtension(`.${extension}`)
+    }
+
+    // 默认为二进制流
+    return 'application/octet-stream'
+  }
+
+  /**
    * 生成用于存储的S3键名
    */
   public static generateImageKey(messageId: string, originalUrl: string, guildId?: string, index: number = 0): string {
@@ -295,6 +447,22 @@ export class S3Uploader {
     const groupPath = guildId || 'private'
     
     return `images/${dateStr}/${groupPath}/${messageId}_${timestamp}${suffix}.${extension}`
+  }
+
+  /**
+   * 生成用于文件存储的S3键名
+   */
+  public static generateFileKey(messageId: string, originalUrl: string, fileName?: string, guildId?: string, index: number = 0): string {
+    const extension = S3Uploader.getFileExtension(originalUrl, fileName)
+    const date = new Date()
+    const dateStr = date.toISOString().split('T')[0] // YYYY-MM-DD
+    const timestamp = Date.now()
+    const suffix = index > 0 ? `_${index}` : ''
+    
+    // 构建路径：files/日期/群号(或private)/消息ID_时间戳.扩展名
+    const groupPath = guildId || 'private'
+    
+    return `files/${dateStr}/${groupPath}/${messageId}_${timestamp}${suffix}.${extension}`
   }
 
   /**
@@ -322,6 +490,29 @@ export class S3Uploader {
       return match ? match[1] : 'jpg'
     } catch {
       return 'jpg'
+    }
+  }
+
+  /**
+   * 提取文件扩展名
+   */
+  private static getFileExtension(url: string, fileName?: string): string {
+    // 优先从文件名提取扩展名
+    if (fileName) {
+      const fileExt = path.extname(fileName).toLowerCase().substring(1)
+      if (fileExt) {
+        return fileExt
+      }
+    }
+
+    // 从URL提取扩展名
+    try {
+      const urlObj = new URL(url)
+      const pathname = urlObj.pathname.toLowerCase()
+      const match = pathname.match(/\.([a-z0-9]+)$/i)
+      return match ? match[1] : 'bin'
+    } catch {
+      return 'bin'
     }
   }
 

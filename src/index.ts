@@ -1,7 +1,7 @@
 import { Context, Session, Element } from 'koishi'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { Config, ChatRecord, ImageRecord } from './types'
+import { Config, ChatRecord, ImageRecord, FileRecord } from './types'
 import { name, inject, ConfigSchema } from './config'
 import { extendDatabase, DatabaseOperations } from './database'
 import { LoggerService, S3Service, MessageProcessorService } from './services'
@@ -38,8 +38,6 @@ export function apply(ctx: Context, config: Config) {
   // 初始化存储目录
   const initStorageDirs = async (): Promise<void> => {
     await ensureDir(getStorageDir('data'))
-    await ensureDir(getStorageDir('cache'))
-    await ensureDir(getStorageDir('temp'))
     logger.info('存储目录初始化完成')
   }
 
@@ -49,11 +47,13 @@ export function apply(ctx: Context, config: Config) {
       return false
     }
 
+    // 跳过私聊消息
+    if (!session.guildId) {
+      return false
+    }
+
     // 检查群组过滤
     if (config.monitor.enabledGroups.length > 0) {
-      if (!session.guildId) {
-        return false
-      }
       if (!config.monitor.enabledGroups.includes(session.guildId)) {
         return false
       }
@@ -131,6 +131,7 @@ export function apply(ctx: Context, config: Config) {
         content: record.content,
         messageType: record.messageType,
         imageUrls: record.imageUrls ? JSON.parse(record.imageUrls) : [],
+        fileUrls: record.fileUrls ? JSON.parse(record.fileUrls) : [],
         originalElements: JSON.parse(record.originalElements)
       }
       
@@ -190,48 +191,131 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 异步处理图片上传
-  const processImageUploadsAsync = async (
+  // 上传文件到S3
+  const uploadFileToS3 = async (fileUrl: string, fileName: string, messageId: string, guildId?: string): Promise<string | null> => {
+    const s3Uploader = s3Service.getUploader()
+    if (!s3Uploader) {
+      logger.error('S3上传器未初始化')
+      return null
+    }
+
+    try {
+      const s3Key = S3Uploader.generateFileKey(messageId, fileUrl, fileName, guildId)
+      const result = await s3Uploader.uploadFileFromUrl(fileUrl, s3Key, fileName)
+
+      if (result.success && result.url) {
+        // 替换URL域名
+        const finalUrl = replaceImageUrl(result.url)
+        
+        const fileRecord: Omit<FileRecord, 'id'> = {
+          originalUrl: fileUrl,
+          s3Url: finalUrl,  // 使用替换后的URL
+          s3Key: result.key || s3Key,
+          fileName: fileName,
+          fileSize: result.fileSize || 0,
+          uploadedAt: Date.now(),
+          messageId: messageId
+        }
+
+        await dbOps.createFileRecord(fileRecord)
+        
+        // 简化非调试模式的日志输出
+        if (config.debug) {
+          logger.info(`✅ 文件上传成功: ${fileName} -> ${finalUrl}`)
+        }
+        
+        return finalUrl  // 返回替换后的URL
+      } else {
+        logger.error(`❌ 文件上传失败: ${fileName} - ${result.error}`)
+        return null
+      }
+    } catch (error: any) {
+      logger.error(`❌ 上传文件时发生错误: ${fileName}`, error)
+      return null
+    }
+  }
+
+  // 异步处理图片和文件上传
+  const processFileUploadsAsync = async (
     imageUrls: string[], 
+    fileUrls: Array<{ url: string; fileName: string }>,
     messageId: string, 
     guildId: string | undefined,
     originalRecord: ChatRecord
   ): Promise<void> => {
-    if (imageUrls.length === 0) {
+    if (imageUrls.length === 0 && fileUrls.length === 0) {
       return
     }
 
     try {
-      const uploadPromises = imageUrls.map(imageUrl => 
-        uploadImageToS3(imageUrl, messageId, guildId)
-      )
-      
-      const uploadResults = await Promise.allSettled(uploadPromises)
-      
-      const successfulUploads: string[] = []
-      const failedUploads: string[] = []
-      
-      uploadResults.forEach((result, index) => {
-        if (result.status === 'fulfilled' && result.value) {
-          successfulUploads.push(result.value)
-        } else {
-          failedUploads.push(imageUrls[index])
-        }
-      })
+      const urlMapping: Record<string, string> = {}
+      const successfulImageUploads: string[] = []
+      const successfulFileUploads: string[] = []
 
-      if (successfulUploads.length > 0) {
-        await dbOps.updateChatRecord(messageId, {
-          imageUrls: JSON.stringify(successfulUploads)
+      // 处理图片上传
+      if (imageUrls.length > 0) {
+        const imageUploadPromises = imageUrls.map(imageUrl => 
+          uploadImageToS3(imageUrl, messageId, guildId)
+        )
+        
+        const imageUploadResults = await Promise.allSettled(imageUploadPromises)
+        
+        imageUploadResults.forEach((result, index) => {
+          if (result.status === 'fulfilled' && result.value) {
+            successfulImageUploads.push(result.value)
+            urlMapping[imageUrls[index]] = result.value
+          }
         })
+      }
+
+      // 处理文件上传
+      if (fileUrls.length > 0) {
+        const fileUploadPromises = fileUrls.map(fileInfo => 
+          uploadFileToS3(fileInfo.url, fileInfo.fileName, messageId, guildId)
+        )
+        
+        const fileUploadResults = await Promise.allSettled(fileUploadPromises)
+        
+        fileUploadResults.forEach((result, index) => {
+          if (result.status === 'fulfilled' && result.value) {
+            successfulFileUploads.push(result.value)
+            urlMapping[fileUrls[index].url] = result.value
+          }
+        })
+      }
+
+      // 更新数据库记录
+      if (successfulImageUploads.length > 0 || successfulFileUploads.length > 0) {
+        // 更新content中的链接
+        let updatedContent = originalRecord.content
+        Object.entries(urlMapping).forEach(([originalUrl, newUrl]) => {
+          updatedContent = updatedContent.replace(originalUrl, newUrl)
+        })
+
+        const updateData: Partial<ChatRecord> = {
+          content: updatedContent
+        }
+
+        if (successfulImageUploads.length > 0) {
+          updateData.imageUrls = JSON.stringify(successfulImageUploads)
+        }
+
+        if (successfulFileUploads.length > 0) {
+          updateData.fileUrls = JSON.stringify(successfulFileUploads)
+        }
+
+        await dbOps.updateChatRecord(messageId, updateData)
         
         // 更新本地文件记录
         await updateLocalFileRecord({
           ...originalRecord,
-          imageUrls: JSON.stringify(successfulUploads)
+          content: updatedContent,
+          imageUrls: successfulImageUploads.length > 0 ? JSON.stringify(successfulImageUploads) : originalRecord.imageUrls,
+          fileUrls: successfulFileUploads.length > 0 ? JSON.stringify(successfulFileUploads) : originalRecord.fileUrls
         })
       }
     } catch (error: any) {
-      logger.error('批量上传图片时发生错误', error)
+      logger.error('批量上传文件时发生错误', error)
     }
   }
 
@@ -254,14 +338,15 @@ export function apply(ctx: Context, config: Config) {
       const lines = existingContent.split('\n').filter(line => line.trim())
       const updatedLines = lines.map(line => {
         try {
-          const lineRecord = JSON.parse(line)
-          if (lineRecord.messageId === record.messageId) {
-            return JSON.stringify({
-              ...lineRecord,
-              content: record.content,
-              imageUrls: record.imageUrls ? JSON.parse(record.imageUrls) : []
-            })
-          }
+                  const lineRecord = JSON.parse(line)
+        if (lineRecord.messageId === record.messageId) {
+          return JSON.stringify({
+            ...lineRecord,
+            content: record.content,
+            imageUrls: record.imageUrls ? JSON.parse(record.imageUrls) : [],
+            fileUrls: record.fileUrls ? JSON.parse(record.fileUrls) : []
+          })
+        }
           return line
         } catch (error) {
           return line
@@ -633,6 +718,7 @@ export function apply(ctx: Context, config: Config) {
         timestamp,
         messageType: processed.messageType,
         imageUrls: processed.imageUrls.length > 0 ? JSON.stringify(processed.imageUrls) : undefined,
+        fileUrls: processed.fileUrls.length > 0 ? JSON.stringify(processed.fileUrls) : undefined,
         isUploaded: false
       }
 
@@ -642,9 +728,9 @@ export function apply(ctx: Context, config: Config) {
       // 保存到本地文件
       await saveMessageToLocalFile(record)
 
-      // 异步处理图片上传
-      if (processed.imageUrls.length > 0) {
-        processImageUploadsAsync(processed.imageUrls, messageId, guildId, record)
+      // 异步处理图片和文件上传
+      if (processed.imageUrls.length > 0 || processed.fileUrls.length > 0) {
+        processFileUploadsAsync(processed.imageUrls, processed.fileUrls, messageId, guildId, record)
       }
 
       // 简化非调试模式的消息处理日志

@@ -4,6 +4,7 @@ export interface ProcessedMessage {
   content: string
   messageType: 'text' | 'image' | 'mixed' | 'other'
   imageUrls: string[]
+  fileUrls: Array<{ url: string; fileName: string }>
 }
 
 export class MessageProcessor {
@@ -21,6 +22,7 @@ export class MessageProcessor {
     let hasText = false
     let hasImage = false
     const imageUrls: string[] = []
+    const fileUrls: Array<{ url: string; fileName: string }> = []
 
     for (const element of elements) {
       switch (element.type) {
@@ -143,9 +145,10 @@ export class MessageProcessor {
           break
 
         case 'file':
-          const fileName = element.attrs?.name || '未知文件'
+          const fileName = element.attrs?.name || element.attrs?.file || '未知文件'
           const fileUrl = element.attrs?.src || element.attrs?.url || ''
           if (fileUrl) {
+            fileUrls.push({ url: fileUrl, fileName })
             content += `[文件: ${fileName} - ${fileUrl}]`
           } else {
             content += `[文件: ${fileName}]`
@@ -268,7 +271,8 @@ export class MessageProcessor {
     return {
       content: content.trim(),
       messageType,
-      imageUrls
+      imageUrls,
+      fileUrls
     }
   }
 
@@ -277,6 +281,13 @@ export class MessageProcessor {
    */
   hasImages(elements: Element[]): boolean {
     return elements.some(element => element.type === 'image' || element.type === 'img')
+  }
+
+  /**
+   * 检查消息是否包含文件
+   */
+  hasFiles(elements: Element[]): boolean {
+    return elements.some(element => element.type === 'file')
   }
 
   /**
@@ -295,6 +306,25 @@ export class MessageProcessor {
     }
     
     return imageUrls
+  }
+
+  /**
+   * 提取所有文件URL
+   */
+  extractFileUrls(elements: Element[]): Array<{ url: string; fileName: string }> {
+    const fileUrls: Array<{ url: string; fileName: string }> = []
+    
+    for (const element of elements) {
+      if (element.type === 'file') {
+        const fileUrl = element.attrs?.src || element.attrs?.url || ''
+        const fileName = element.attrs?.name || element.attrs?.file || '未知文件'
+        if (fileUrl) {
+          fileUrls.push({ url: fileUrl, fileName })
+        }
+      }
+    }
+    
+    return fileUrls
   }
 
   /**
