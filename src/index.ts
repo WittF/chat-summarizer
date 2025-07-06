@@ -7,6 +7,7 @@ import { extendDatabase, DatabaseOperations } from './database'
 import { LoggerService, S3Service, MessageProcessorService } from './services'
 import { CommandHandler } from './commands'
 import { S3Uploader } from './s3-uploader'
+import { SafeFileWriter } from './file-writer'
 import { 
   formatDateInUTC8, 
   getDateStringInUTC8, 
@@ -28,6 +29,7 @@ export function apply(ctx: Context, config: Config) {
   const dbOps = new DatabaseOperations(ctx)
   const s3Service = new S3Service(config, logger)
   const messageService = new MessageProcessorService(config.chatLog.includeImages)
+  const fileWriter = new SafeFileWriter(ctx.logger('chat-summarizer:file-writer'))
   
   // 获取本地存储目录
   const getStorageDir = (subDir: string): string => {
@@ -134,24 +136,26 @@ export function apply(ctx: Context, config: Config) {
       const fileName = `${groupKey}_${dateStr}.jsonl`
       const filePath = path.join(logDir, fileName)
       
-              const logEntry = {
-          timestamp: record.timestamp,
-          time: formatDateInUTC8(record.timestamp),
-          messageId: record.messageId,
-          guildId: record.guildId,
-          channelId: record.channelId,
-          userId: record.userId,
-          username: record.username,
-          content: record.content,
-          messageType: record.messageType,
-          imageUrls: safeJsonParse(record.imageUrls, []),
-          fileUrls: safeJsonParse(record.fileUrls, []),
-          videoUrls: safeJsonParse(record.videoUrls, []),
-          originalElements: safeJsonParse(record.originalElements, [])
-        }
+      const logEntry = {
+        timestamp: record.timestamp,
+        time: formatDateInUTC8(record.timestamp),
+        messageId: record.messageId,
+        guildId: record.guildId,
+        channelId: record.channelId,
+        userId: record.userId,
+        username: record.username,
+        content: record.content,
+        messageType: record.messageType,
+        imageUrls: safeJsonParse(record.imageUrls, []),
+        fileUrls: safeJsonParse(record.fileUrls, []),
+        videoUrls: safeJsonParse(record.videoUrls, []),
+        originalElements: safeJsonParse(record.originalElements, [])
+      }
       
       const logLine = safeJsonStringify(logEntry) + '\n'
-      await fs.appendFile(filePath, logLine, 'utf8')
+      
+      // 使用安全文件写入器
+      await fileWriter.safeAppend(filePath, logLine)
       
       // 只在调试模式下记录详细信息
       if (config.debug) {
@@ -409,33 +413,27 @@ export function apply(ctx: Context, config: Config) {
       const fileName = `${groupKey}_${dateStr}.jsonl`
       const filePath = path.join(getStorageDir('data'), fileName)
       
-      let existingContent = ''
-      try {
-        existingContent = await fs.readFile(filePath, 'utf8')
-      } catch (error) {
-        return
+      // 构建更新后的记录
+      const updatedRecord = {
+        timestamp: record.timestamp,
+        time: formatDateInUTC8(record.timestamp),
+        messageId: record.messageId,
+        guildId: record.guildId,
+        channelId: record.channelId,
+        userId: record.userId,
+        username: record.username,
+        content: record.content,
+        messageType: record.messageType,
+        imageUrls: safeJsonParse(record.imageUrls, []),
+        fileUrls: safeJsonParse(record.fileUrls, []),
+        videoUrls: safeJsonParse(record.videoUrls, []),
+        originalElements: safeJsonParse(record.originalElements, [])
       }
       
-      const lines = existingContent.split('\n').filter(line => line.trim())
-      const updatedLines = lines.map(line => {
-        try {
-          const lineRecord = safeJsonParse(line, { messageId: '' })
-          if (lineRecord.messageId === record.messageId) {
-            return safeJsonStringify({
-              ...lineRecord,
-              content: record.content,
-              imageUrls: safeJsonParse(record.imageUrls, []),
-              fileUrls: safeJsonParse(record.fileUrls, []),
-              videoUrls: safeJsonParse(record.videoUrls, [])
-            })
-          }
-          return line
-        } catch (error) {
-          return line
-        }
-      })
+      const updatedLine = safeJsonStringify(updatedRecord) + '\n'
       
-      await fs.writeFile(filePath, updatedLines.join('\n') + '\n', 'utf8')
+      // 使用安全文件写入器进行更新
+      await fileWriter.safeUpdate(filePath, record.messageId, updatedLine)
       
       // 只在调试模式下记录详细信息
       if (config.debug) {
@@ -884,7 +882,7 @@ export function apply(ctx: Context, config: Config) {
   ctx.on('ready', initializePlugin)
 
   // 插件卸载时清理资源
-  ctx.on('dispose', () => {
+  ctx.on('dispose', async () => {
     if (uploadScheduler) {
       clearTimeout(uploadScheduler)
       uploadScheduler = null
@@ -893,6 +891,16 @@ export function apply(ctx: Context, config: Config) {
       clearInterval(cleanupScheduler)
       cleanupScheduler = null
     }
+    
+    // 等待所有文件写入操作完成并清理资源
+    try {
+      await fileWriter.flush()
+      fileWriter.dispose()
+      logger.info('所有文件写入操作已完成，文件写入器已清理')
+    } catch (error: any) {
+      logger.error('等待文件写入完成时发生错误', error)
+    }
+    
     logger.info('聊天记录插件已卸载，已清理所有定时任务')
   })
 } 
