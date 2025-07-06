@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-chat-summarizer",
   "description": "Koishi聊天记录收集和上传插件",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -44,7 +44,11 @@
       "zh": "Koishi聊天记录收集和上传插件"
     },
     "service": {
-      "required": ["database", "http", "puppeteer"]
+      "required": [
+        "database",
+        "http",
+        "puppeteer"
+      ]
     }
   }
 }
