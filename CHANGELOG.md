@@ -1,3 +1,14 @@
+## [1.1.0](https://github.com/WittF/chat-summarizer/compare/v1.0.0...v1.1.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **admin:** 添加管理员配置和获取S3链接命令 ([c6e66b9](https://github.com/WittF/chat-summarizer/commit/c6e66b9628a51740fcb0a11d9f1d806aa8af9426))
+* **config:** 更新聊天记录配置，添加最大文件大小限制并优化S3配置描述 ([bc4a048](https://github.com/WittF/chat-summarizer/commit/bc4a048eb461bfdbe6537bce2993c14d35f3d941))
+
+### 🐛 Bug修复
+
+* **release:** 移除不存在的package-lock.json引用 ([7d48edc](https://github.com/WittF/chat-summarizer/commit/7d48edc369e425c4f49d8a28f47d91d02683143f))
+
 ## 1.0.0 (2025-07-06)
 
 ### ✨ 功能更新
