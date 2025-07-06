@@ -166,7 +166,7 @@ export class MarkdownToImageService {
           /* emoji专用字体配置 */
           .emoji,
           .ai-summary-title {
-            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', sans-serif;
+            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', sans-serif;
           }
           
           h1 {
@@ -251,6 +251,30 @@ export class MarkdownToImageService {
           this.logger.info('所有字体加载完成')
         } catch (e) {
           this.logger.warn('部分字体加载超时，使用fallback字体继续渲染')
+          
+          // 特别检查emoji字体加载状态
+          try {
+            const emojiFontLoaded = await page.evaluate(() => {
+              return document.fonts.check('16px "NotoColorEmoji"')
+            })
+            
+            if (!emojiFontLoaded) {
+              this.logger.warn('Emoji字体加载失败，尝试使用系统emoji字体')
+              // 注入CSS强制使用系统emoji字体
+              await page.addStyleTag({
+                content: `
+                  .emoji, .ai-summary-title {
+                    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
+                  }
+                `
+              })
+              
+              // 给系统字体一些加载时间
+              await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+          } catch (emojiError) {
+            this.logger.warn('Emoji字体检查失败，使用默认处理')
+          }
         }
         
         await new Promise(resolve => setTimeout(resolve, 800))

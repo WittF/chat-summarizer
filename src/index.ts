@@ -6,7 +6,7 @@ import { name, inject, ConfigSchema, CONSTANTS } from './config'
 import { extendDatabase, DatabaseOperations } from './database'
 import { LoggerService, S3Service, MessageProcessorService } from './services'
 import { CommandHandler } from './commands'
-import { S3Uploader } from './s3-uploader'
+import { S3Uploader, UploadResult } from './s3-uploader'
 import { SafeFileWriter } from './file-writer'
 import { 
   formatDateInUTC8, 
@@ -669,23 +669,29 @@ export function apply(ctx: Context, config: Config) {
 
       // 批量上传文件
       logger.info(`开始上传 ${filesToUpload.length} 个文件`)
-      const uploadResults: any[] = []
 
-      for (const fileToUpload of filesToUpload) {
+      // 改为并行上传，并添加超时控制
+      const uploadPromises = filesToUpload.map(async (fileToUpload) => {
         try {
           // 简化非调试模式的上传日志
           if (config.debug) {
             logger.info(`正在上传: ${path.basename(fileToUpload.filePath)} -> ${fileToUpload.key}`)
           }
           
-          // 直接上传本地JSONL文件
-          const result = await s3Uploader.uploadFile(
+          // 使用Promise.race添加60秒超时
+          const uploadPromise = s3Uploader.uploadFile(
             fileToUpload.filePath, 
             fileToUpload.key, 
             'application/x-ndjson; charset=utf-8'
           )
           
-          uploadResults.push({ ...result, groupKey: fileToUpload.groupKey, filePath: fileToUpload.filePath })
+          const timeoutPromise = new Promise<UploadResult>((_, reject) => {
+            setTimeout(() => reject(new Error('上传超时（60秒）')), 60000)
+          })
+          
+          const result = await Promise.race([uploadPromise, timeoutPromise])
+          
+          const resultWithMeta = { ...result, groupKey: fileToUpload.groupKey, filePath: fileToUpload.filePath }
 
           if (result.success) {
             // 简化非调试模式的成功日志
@@ -702,14 +708,23 @@ export function apply(ctx: Context, config: Config) {
           } else {
             logger.error(`❌ 群组 ${fileToUpload.groupKey} 上传失败: ${result.error}`)
           }
+          
+          return resultWithMeta
         } catch (error: any) {
           logger.error(`处理文件 ${fileToUpload.groupKey} 时发生错误`, error)
+          return { success: false, error: error.message, groupKey: fileToUpload.groupKey, filePath: fileToUpload.filePath }
         }
-      }
+      })
+
+      // 等待所有上传完成，使用allSettled避免单个失败影响其他上传
+      const settledResults = await Promise.allSettled(uploadPromises)
+      const finalResults = settledResults.map(result => 
+        result.status === 'fulfilled' ? result.value : { success: false, error: '上传异常' }
+      )
 
       // 统计上传结果
-      const successCount = uploadResults.filter(r => r.success).length
-      const totalCount = uploadResults.length
+      const successCount = finalResults.filter(r => r.success).length
+      const totalCount = finalResults.length
       logger.info(`聊天记录自动上传完成: ${successCount}/${totalCount} 个文件上传成功`)
 
     } catch (error: any) {
