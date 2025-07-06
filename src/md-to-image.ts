@@ -50,44 +50,43 @@ export class MarkdownToImageService {
   }
 
   /**
-   * 生成字体CSS - 完整的中文字体fallback策略
+   * 生成字体CSS - hybrid策略，平衡性能和可靠性
    */
   private generateFontCSS(): string {
-    // 英文字体
+    // 英文字体（小文件，优先加载）
     const interRegular = this.getFontBase64('Inter-Regular.woff2')
     const interBold = this.getFontBase64('Inter-Bold.woff2')
     
-    // 中文字体 - 多层fallback
-    const notoSansCJKscRegular = this.getFontBase64('NotoSansCJKsc-Regular.otf')
-    const notoSansCJKscBold = this.getFontBase64('NotoSansCJKsc-Bold.otf')
-    const notoSansCJKtcRegular = this.getFontBase64('NotoSansCJKtc-Regular.otf')
-    const sourceHanSansRegular = this.getFontBase64('SourceHanSansSC-Regular.otf')
-    
-    // Emoji字体
+    // Emoji字体（大文件，但关键）
     const notoColorEmoji = this.getFontBase64('NotoColorEmoji.ttf')
+    
+    // 至少保留一个中文字体作为fallback
+    const notoSansCJKscRegular = this.getFontBase64('NotoSansCJKsc-Regular.otf')
 
     // 检查字体数据是否成功读取
     const fontStatus = {
       interRegular: interRegular.length > 0,
       interBold: interBold.length > 0,
+      notoColorEmoji: notoColorEmoji.length > 0,
       notoSansCJKscRegular: notoSansCJKscRegular.length > 0,
-      notoSansCJKscBold: notoSansCJKscBold.length > 0,
-      notoSansCJKtcRegular: notoSansCJKtcRegular.length > 0,
-      sourceHanSansRegular: sourceHanSansRegular.length > 0,
-      notoColorEmoji: notoColorEmoji.length > 0
     }
     
     this.logger.info('字体文件读取状态:', fontStatus)
 
+    // 如果emoji字体读取失败，记录警告
+    if (!fontStatus.notoColorEmoji) {
+      this.logger.warn('Emoji字体文件读取失败，将完全依赖系统字体，可能在某些环境下显示异常')
+    }
+
     return `
       ${interRegular ? `
-      /* 主要英文字体 */
+      /* 英文字体 */
       @font-face {
         font-family: 'Inter';
         src: url(data:font/woff2;base64,${interRegular}) format('woff2');
         font-weight: normal;
         font-style: normal;
-        font-display: block;
+        font-display: swap;
       }` : ''}
       
       ${interBold ? `
@@ -96,56 +95,29 @@ export class MarkdownToImageService {
         src: url(data:font/woff2;base64,${interBold}) format('woff2');
         font-weight: bold;
         font-style: normal;
-        font-display: block;
-      }` : ''}
-      
-      ${notoSansCJKscRegular ? `
-      /* 主要中文字体 - Noto Sans CJK 简体 */
-      @font-face {
-        font-family: 'NotoSansCJKsc';
-        src: url(data:font/opentype;base64,${notoSansCJKscRegular}) format('opentype');
-        font-weight: normal;
-        font-style: normal;
-        font-display: block;
-      }` : ''}
-      
-      ${notoSansCJKscBold ? `
-      @font-face {
-        font-family: 'NotoSansCJKsc';
-        src: url(data:font/opentype;base64,${notoSansCJKscBold}) format('opentype');
-        font-weight: bold;
-        font-style: normal;
-        font-display: block;
-      }` : ''}
-      
-      ${notoSansCJKtcRegular ? `
-      /* 中文字体fallback 1 - Noto Sans CJK 繁体 */
-      @font-face {
-        font-family: 'NotoSansCJKtc';
-        src: url(data:font/opentype;base64,${notoSansCJKtcRegular}) format('opentype');
-        font-weight: normal;
-        font-style: normal;
-        font-display: block;
-      }` : ''}
-      
-      ${sourceHanSansRegular ? `
-      /* 中文字体fallback 2 - 思源黑体 */
-      @font-face {
-        font-family: 'SourceHanSansSC';
-        src: url(data:font/opentype;base64,${sourceHanSansRegular}) format('opentype');
-        font-weight: normal;
-        font-style: normal;
-        font-display: block;
+        font-display: swap;
       }` : ''}
       
       ${notoColorEmoji ? `
-      /* Emoji字体 */
+      /* Emoji字体 - 关键字体 */
       @font-face {
         font-family: 'NotoColorEmoji';
         src: url(data:font/truetype;base64,${notoColorEmoji}) format('truetype');
         font-weight: normal;
         font-style: normal;
-        font-display: block;
+        font-display: fallback;
+        unicode-range: U+1F000-1F9FF, U+2600-27BF, U+1F600-1F64F, U+1F300-1F5FF, U+1F680-1F6FF, U+1F700-1F77F, U+1F780-1F7FF, U+1F800-1F8FF, U+1F900-1F9FF, U+1FA00-1FA6F, U+1FA70-1FAFF, U+2700-27BF;
+      }` : ''}
+      
+      ${notoSansCJKscRegular ? `
+      /* 中文字体fallback */
+      @font-face {
+        font-family: 'NotoSansCJKsc';
+        src: url(data:font/opentype;base64,${notoSansCJKscRegular}) format('opentype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+        unicode-range: U+4E00-9FFF, U+3400-4DBF, U+20000-2A6DF, U+2A700-2B73F, U+2B740-2B81F, U+2B820-2CEAF, U+2CEB0-2EBEF;
       }` : ''}
     `
   }
@@ -178,7 +150,7 @@ export class MarkdownToImageService {
           /* 完整的字体fallback策略 */
           body {
             background-color: #f6f8fa;
-            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
             margin: 20px;
           }
           
@@ -191,24 +163,24 @@ export class MarkdownToImageService {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
             line-height: 1.6;
           }
           
           /* 中文文本专用样式 */
           .markdown-body p, .markdown-body li, .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 {
-            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
           }
           
           /* 代码块使用等宽字体，包含中文支持 */
           .markdown-body pre, .markdown-body code {
-            font-family: 'Consolas', 'Monaco', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', monospace;
+            font-family: 'Consolas', 'Monaco', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei';
           }
           
-          /* emoji专用字体配置 */
+          /* emoji专用字体配置 - 多层fallback */
           .emoji,
           .ai-summary-title {
-            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', sans-serif;
+            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif;
           }
           
           h1 {
@@ -240,7 +212,7 @@ export class MarkdownToImageService {
           /* 粗体文本确保使用粗体字体 */
           .markdown-body strong, .markdown-body b {
             font-weight: bold;
-            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
           }
           
           .ai-summary-title {
@@ -278,96 +250,70 @@ export class MarkdownToImageService {
           deviceScaleFactor: 2
         })
         
-        // 等待页面和字体加载完成
+        // 等待页面加载完成
         await page.waitForSelector('.markdown-body')
         
-        // 等待所有字体加载完成
+        // 智能字体检查和fallback处理
         try {
-          // 动态获取所有成功加载的字体
-          const availableFonts = await page.evaluate(() => {
-            const allFonts = ['Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'NotoColorEmoji']
-            return allFonts.filter(font => document.fonts.check(`16px "${font}"`))
+          const fontCheckResults = await page.evaluate(() => {
+            const fontsToCheck = ['Inter', 'NotoColorEmoji', 'NotoSansCJKsc']
+            const results = {}
+            
+            fontsToCheck.forEach(font => {
+              results[font] = document.fonts.check(`16px "${font}"`)
+            })
+            
+            return results
           })
           
-          this.logger.info('成功加载的字体:', availableFonts)
+          this.logger.info('字体加载检查结果:', fontCheckResults)
           
-          // 检查关键字体是否加载
-          const criticalFonts = ['Inter', 'NotoSansCJKsc', 'NotoColorEmoji']
-          const missingFonts = criticalFonts.filter(font => !availableFonts.includes(font))
-          
-          if (missingFonts.length > 0) {
-            this.logger.warn(`关键字体加载失败: ${missingFonts.join(', ')}`)
+          // 检查关键字体
+          if (fontCheckResults.Inter) {
+            this.logger.info('✅ Inter英文字体加载成功')
           } else {
-            this.logger.info('所有关键字体加载完成')
+            this.logger.warn('❌ Inter英文字体加载失败')
+          }
+          
+          if (fontCheckResults.NotoColorEmoji) {
+            this.logger.info('✅ Emoji字体加载成功')
+          } else {
+            this.logger.warn('❌ Emoji字体加载失败，启用系统字体fallback')
+            
+            // 注入emoji fallback CSS
+            await page.addStyleTag({
+              content: `
+                .emoji, .ai-summary-title {
+                  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
+                }
+              `
+            })
+          }
+          
+          if (fontCheckResults.NotoSansCJKsc) {
+            this.logger.info('✅ 中文字体加载成功')
+          } else {
+            this.logger.warn('❌ 中文字体加载失败，使用系统中文字体')
           }
           
         } catch (e) {
-          this.logger.warn('字体加载检查失败，使用fallback字体继续渲染')
+          this.logger.warn('字体检查失败，启用完整fallback策略')
           
-          // 特别检查emoji字体加载状态
-          try {
-            const emojiFontLoaded = await page.evaluate(() => {
-              return document.fonts.check('16px "NotoColorEmoji"')
-            })
-            
-            if (!emojiFontLoaded) {
-              this.logger.warn('Emoji字体加载失败，尝试使用系统emoji字体')
-              // 注入CSS强制使用系统emoji字体
-              await page.addStyleTag({
-                content: `
-                  .emoji, .ai-summary-title {
-                    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
-                  }
-                  
-                  /* 确保emoji字符使用正确的字体 */
-                  .emoji {
-                    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
-                    font-size: 1.1em;
-                    line-height: 1;
-                  }
-                  
-                  /* 标题中的emoji特殊处理 */
-                  .ai-summary-title {
-                    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
-                    font-size: 28px;
-                  }
-                `
-              })
-              
-              // 给系统字体一些加载时间
-              await new Promise(resolve => setTimeout(resolve, 1000))
-              
-              // 再次检查系统emoji字体是否可用
-              try {
-                const systemEmojiAvailable = await page.evaluate(() => {
-                  // 测试系统emoji字体是否可用
-                  const testEmoji = '🤖'
-                  const canvas = document.createElement('canvas')
-                  const ctx = canvas.getContext('2d')
-                  if (!ctx) return false
-                  
-                  // 尝试使用系统emoji字体
-                  ctx.font = '16px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"'
-                  ctx.fillText(testEmoji, 0, 0)
-                  
-                  return true
-                })
-                
-                if (systemEmojiAvailable) {
-                  this.logger.info('系统emoji字体可用')
-                } else {
-                  this.logger.warn('系统emoji字体不可用，可能显示为方块')
-                }
-              } catch (testError) {
-                this.logger.warn('系统emoji字体测试失败')
+          // 出错时的完整fallback策略
+          await page.addStyleTag({
+            content: `
+              body, .markdown-body, .markdown-body * {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji' !important;
               }
-            }
-          } catch (emojiError) {
-            this.logger.warn('Emoji字体检查失败，使用默认处理')
-          }
+              .emoji, .ai-summary-title {
+                font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
+              }
+            `
+          })
         }
         
-        await new Promise(resolve => setTimeout(resolve, 800))
+        // 额外等待确保字体加载完成
+        await new Promise(resolve => setTimeout(resolve, 1200))
         
         // 获取内容区域并截图
         const element = await page.$('.markdown-body')
