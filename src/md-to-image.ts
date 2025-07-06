@@ -99,14 +99,13 @@ export class MarkdownToImageService {
       }` : ''}
       
       ${notoColorEmoji ? `
-      /* Emoji字体 - 关键字体，覆盖所有emoji和符号 */
+      /* Emoji字体 - 移除unicode-range限制，应用于所有字符 */
       @font-face {
         font-family: 'NotoColorEmoji';
         src: url(data:font/truetype;base64,${notoColorEmoji}) format('truetype');
         font-weight: normal;
         font-style: normal;
         font-display: fallback;
-        unicode-range: U+1F000-1F02F, U+1F0A0-1F0FF, U+1F100-1F64F, U+1F300-1F5FF, U+1F600-1F64F, U+1F680-1F6FF, U+1F700-1F77F, U+1F780-1F7FF, U+1F800-1F8FF, U+1F900-1F9FF, U+1FA00-1FA6F, U+1FA70-1FAFF, U+2600-26FF, U+2700-27BF, U+2B00-2BFF, U+3200-32FF, U+FE00-FE0F, U+20A0-20CF, U+2190-21FF, U+2200-22FF, U+2300-23FF, U+2460-24FF, U+25A0-25FF, U+2900-297F, U+2980-29FF, U+2A00-2AFF, U+1F1E6-1F1FF;
       }` : ''}
       
       ${notoSansCJKscRegular ? `
@@ -317,9 +316,13 @@ export class MarkdownToImageService {
         // 额外等待确保字体加载完成
         await new Promise(resolve => setTimeout(resolve, 1200))
         
-        // 测试emoji渲染情况
+        // 测试emoji渲染情况 - 在实际渲染上下文中测试
         try {
           const emojiTest = await page.evaluate(() => {
+            // 在markdown-body中直接测试emoji渲染
+            const markdownBody = document.querySelector('.markdown-body')
+            if (!markdownBody) return []
+            
             // 测试多个emoji字符的渲染
             const testEmojis = [
               { char: '🤖', name: 'robot' },
@@ -336,11 +339,13 @@ export class MarkdownToImageService {
             testEmojis.forEach(emoji => {
               const testDiv = document.createElement('div')
               testDiv.innerHTML = emoji.char
-              testDiv.style.fontFamily = '"NotoColorEmoji", "Apple Color Emoji", "Segoe UI Emoji"'
               testDiv.style.fontSize = '16px'
+              testDiv.style.display = 'inline-block'
+              testDiv.style.visibility = 'hidden'
               testDiv.style.position = 'absolute'
-              testDiv.style.left = '-1000px'
-              document.body.appendChild(testDiv)
+              testDiv.style.top = '0'
+              testDiv.style.left = '0'
+              markdownBody.appendChild(testDiv)
               
               const style = window.getComputedStyle(testDiv)
               const result = {
@@ -349,17 +354,18 @@ export class MarkdownToImageService {
                 fontFamily: style.fontFamily,
                 width: testDiv.offsetWidth,
                 height: testDiv.offsetHeight,
-                isVisible: testDiv.offsetWidth > 0 && testDiv.offsetHeight > 0
+                isVisible: testDiv.offsetWidth > 0 && testDiv.offsetHeight > 0,
+                actualFont: style.fontFamily.split(',')[0].trim().replace(/['"]/g, '')
               }
               
               results.push(result)
-              document.body.removeChild(testDiv)
+              markdownBody.removeChild(testDiv)
             })
             
             return results
           })
           
-          this.logger.info('详细Emoji渲染测试结果:', emojiTest)
+          this.logger.info('实际渲染上下文Emoji测试结果:', emojiTest)
           
           const successCount = emojiTest.filter(test => test.isVisible && test.width > 0).length
           const totalCount = emojiTest.length
@@ -371,6 +377,17 @@ export class MarkdownToImageService {
             const failedEmojis = emojiTest.filter(test => !test.isVisible || test.width === 0)
             this.logger.warn('失败的Emoji:', failedEmojis.map(e => `${e.char}(${e.name})`).join(', '))
           }
+          
+          // 检查实际使用的字体
+          const fontUsage = {}
+          emojiTest.forEach(test => {
+            if (fontUsage[test.actualFont]) {
+              fontUsage[test.actualFont]++
+            } else {
+              fontUsage[test.actualFont] = 1
+            }
+          })
+          this.logger.info('实际使用的字体分布:', fontUsage)
           
         } catch (testError) {
           this.logger.warn('Emoji渲染测试失败', testError)
