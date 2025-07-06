@@ -2,7 +2,7 @@ import { Schema } from 'koishi'
 import { Config } from './types'
 
 export const name = 'chat-summarizer'
-export const inject = { required: ['database', 'http'] }
+export const inject = { required: ['database', 'http', 'puppeteer'] }
 
 export const ConfigSchema: Schema<Config> = Schema.object({
   chatLog: Schema.object({

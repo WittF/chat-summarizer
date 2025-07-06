@@ -27,6 +27,7 @@
   - 群组参数：
     - `current` - 当前群（仅在群聊中有效）
     - `123456789` - 具体群号
+    
   - 时间范围：
     - 预设：`today`, `yesterday`, `last7days`, `lastweek`, `thismonth`, `lastmonth`
     - 具体日期：`2024-01-01` 或 `2024-01-01,2024-01-31`
@@ -64,12 +65,16 @@
 3. **导出聊天记录**：
    ```
    cs.export current yesterday        # 导出当前群昨天的记录（JSON格式，所有类型）
+   cs.export 123456789 last7days txt # 导出指定群最近7天记录为文本格式
    cs.export current 2024-01-01,2024-01-31 csv # 导出当前群1月份记录为CSV格式
+   cs.export private thismonth       # 导出本月私聊记录
    cs.export current today txt -t text # 只导出当前群今天的纯文本消息
+   cs.export current yesterday json -t text,image # 导出文本和图片消息
    cs.export 123456789 lastweek txt -t mixed # 导出包含图片的混合消息
    ```
 
 4. **AI总结功能**：
    ```
-   cs.export 123456789 today json -t text -s # 导出今天的文本消息并AI总结
-   cs.export 123456789 today txt -t text -s -i # 导出今天的文本消息并AI总结并生成图片
+   cs.export current yesterday txt --summarize # 导出昨天记录并生成AI总结
+   cs.export 123456789astweek json -t text -s # 今天的文本息并AI总结
+   cs.export 123456789 thismonth csv --summarize # 导出本月记录并AI总结

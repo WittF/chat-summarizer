@@ -387,7 +387,7 @@ export class CommandHandler {
                 responseMessage += '\n\n🤖 AI总结:\n' + summary
               }
             } else {
-              responseMessage += '\n\n🤖 AI总结:\n' + summary
+            responseMessage += '\n\n🤖 AI总结:\n' + summary
             }
             
             // 删除AI总结临时消息
@@ -395,13 +395,13 @@ export class CommandHandler {
               await session.bot.deleteMessage(session.channelId, aiTempMessage[0])
             }
           }
-                  } catch (error: any) {
+        } catch (error: any) {
             // 删除AI总结临时消息
             if (aiTempMessage && aiTempMessage[0]) {
               await session.bot.deleteMessage(session.channelId, aiTempMessage[0])
             }
-            responseMessage += '\n\n❌ AI总结过程中发生错误: ' + (error?.message || '未知错误')
-          }
+          responseMessage += '\n\n❌ AI总结过程中发生错误: ' + (error?.message || '未知错误')
+        }
       }
 
       // 删除初始的临时消息
