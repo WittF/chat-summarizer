@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/WittF/chat-summarizer/compare/v1.12.0...v1.13.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **database:** 扩展数据库模型以支持聊天记录文件上传，新增相关操作方法 ([e79712d](https://github.com/WittF/chat-summarizer/commit/e79712d22f6792dd720043ddbd12ba508d7be403))
+
 ## [1.12.0](https://github.com/WittF/chat-summarizer/compare/v1.11.2...v1.12.0) (2025-07-06)
 
 ### ✨ 功能更新
