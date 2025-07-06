@@ -1,3 +1,9 @@
+## [1.9.3](https://github.com/WittF/chat-summarizer/compare/v1.9.2...v1.9.3) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 优化字体加载逻辑，增加备用路径尝试和字体加载状态检查 ([944a6c7](https://github.com/WittF/chat-summarizer/commit/944a6c756d04dfb88a0c163fcb1f793e47b823e6))
+
 ## [1.9.2](https://github.com/WittF/chat-summarizer/compare/v1.9.1...v1.9.2) (2025-07-06)
 
 ### 🐛 Bug修复
