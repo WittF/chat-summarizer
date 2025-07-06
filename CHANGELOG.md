@@ -1,3 +1,14 @@
+## [1.4.0](https://github.com/WittF/chat-summarizer/compare/v1.3.0...v1.4.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **ai:** 优化AI总结图片输出功能，使用Koishi puppeteer生成GitHub样式markdown图片 ([dee8d84](https://github.com/WittF/chat-summarizer/commit/dee8d84b9ffc37d247755540cfaf5a406db761cc))
+* **commands:** 优化图片生成失败处理，新增合并转发功能以发送AI总结 ([408fc2f](https://github.com/WittF/chat-summarizer/commit/408fc2fc9f5cc650272df05748501f8b1fddc0b3))
+
+### 🐛 Bug修复
+
+* **release:** 修复错误的Git记录和版本号 ([5b7f0ad](https://github.com/WittF/chat-summarizer/commit/5b7f0ad4e29252c79be49e558db0bc9f9b49661e))
+
 ## [1.3.0](https://github.com/WittF/chat-summarizer/compare/v1.2.0...v1.3.0) (2025-07-06)
 
 ### ✨ 功能更新
