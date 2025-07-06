@@ -1,3 +1,11 @@
+// 群组配置接口
+export interface GroupConfig {
+  groupId: string                  // 群组ID
+  systemPrompt?: string           // 该群组专用的系统提示词（可选）
+  userPromptTemplate?: string     // 该群组专用的用户提示词模板（可选）
+  enabled?: boolean               // 是否启用该群组的AI总结（可选，默认继承全局配置）
+}
+
 export interface Config {
   // S3兼容存储配置
   s3: {
@@ -21,9 +29,9 @@ export interface Config {
   
   // 监控配置
   monitor: {
-    enabledGroups: string[]  // 监控的群组ID列表（空则监控所有群组）
-    excludedUsers: string[]  // 不监控的用户QQ号列表
-    excludeBots: boolean     // 是否排除机器人消息
+    enabledGroups: GroupConfig[]  // 监控的群组配置列表（空则监控所有群组）
+    excludedUsers: string[]       // 不监控的用户QQ号列表
+    excludeBots: boolean          // 是否排除机器人消息
   }
   
   // 管理员配置

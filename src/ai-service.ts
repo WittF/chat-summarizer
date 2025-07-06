@@ -4,20 +4,56 @@ import { handleError } from './utils'
 
 export class AIService {
   private logger: Logger
-  private config: Config['ai']
+  private globalConfig: Config
 
   constructor(private ctx: Context, config: Config) {
     this.logger = ctx.logger('chat-summarizer:ai')
-    this.config = config.ai
+    this.globalConfig = config
+  }
+
+  /**
+   * 获取全局AI配置
+   */
+  private get config(): Config['ai'] {
+    return this.globalConfig.ai
+  }
+
+  /**
+   * 获取群组专用的AI配置
+   */
+  private getGroupAIConfig(guildId: string): {
+    systemPrompt?: string
+    userPromptTemplate?: string
+    enabled?: boolean
+  } {
+    const groupConfig = this.globalConfig.monitor.enabledGroups.find(
+      group => group.groupId === guildId
+    )
+    
+    return {
+      systemPrompt: groupConfig?.systemPrompt || this.config.systemPrompt,
+      userPromptTemplate: groupConfig?.userPromptTemplate || this.config.userPromptTemplate,
+      enabled: groupConfig?.enabled !== undefined ? groupConfig.enabled : this.config.enabled
+    }
   }
 
   /**
    * 检查AI服务是否已启用并配置正确
    */
-  isEnabled(): boolean {
-    return this.config.enabled && 
-           !!this.config.apiUrl && 
-           !!this.config.apiKey
+  isEnabled(guildId?: string): boolean {
+    const globalEnabled = this.config.enabled && 
+                          !!this.config.apiUrl && 
+                          !!this.config.apiKey
+    
+    if (!globalEnabled) return false
+    
+    // 如果提供了群组ID，检查群组专用配置
+    if (guildId) {
+      const groupConfig = this.getGroupAIConfig(guildId)
+      return groupConfig.enabled !== false // 只有明确设置为false才禁用
+    }
+    
+    return true
   }
 
   /**
@@ -46,8 +82,9 @@ export class AIService {
     messageCount: number,
     guildId: string
   ): Promise<string> {
-    if (!this.config.enabled) {
-      throw new Error('AI总结功能未启用')
+    // 检查群组级别的AI启用状态
+    if (!this.isEnabled(guildId)) {
+      throw new Error('AI总结功能未启用或该群组已禁用AI功能')
     }
 
     if (!this.config.apiUrl || !this.config.apiKey) {
@@ -55,8 +92,11 @@ export class AIService {
     }
 
     try {
-      // 构建系统提示词
-      const systemPrompt = this.config.systemPrompt || this.getDefaultSystemPrompt()
+      // 获取群组专用配置
+      const groupConfig = this.getGroupAIConfig(guildId)
+      
+      // 构建系统提示词（优先使用群组配置）
+      const systemPrompt = groupConfig.systemPrompt || this.getDefaultSystemPrompt()
       
       let requestBody: any
 
@@ -86,7 +126,7 @@ export class AIService {
         // 传统模式：直接发送文本内容
         this.logger.debug('使用传统模式发送请求')
         
-        const userPromptTemplate = this.config.userPromptTemplate || this.getDefaultUserPromptTemplate()
+        const userPromptTemplate = groupConfig.userPromptTemplate || this.getDefaultUserPromptTemplate()
         const userPrompt = this.replaceTemplate(userPromptTemplate, {
           timeRange,
           messageCount: messageCount.toString(),

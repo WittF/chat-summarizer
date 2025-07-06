@@ -1,5 +1,5 @@
 import { Schema } from 'koishi'
-import { Config } from './types'
+import { Config, GroupConfig } from './types'
 
 export const name = 'chat-summarizer'
 export const inject = { required: ['database', 'http', 'puppeteer'] }
@@ -50,8 +50,20 @@ export const ConfigSchema: Schema<Config> = Schema.object({
   }).description('S3兼容云存储配置'),
   
   monitor: Schema.object({
-    enabledGroups: Schema.array(Schema.string())
-      .description('监控的群组ID列表（空则监控所有群组）')
+    enabledGroups: Schema.array(Schema.object({
+      groupId: Schema.string()
+        .description('群组ID')
+        .required(),
+      systemPrompt: Schema.string()
+        .role('textarea', { rows: 8 })
+        .description('该群组专用的系统提示词（可选，留空则使用全局配置）'),
+      userPromptTemplate: Schema.string()
+        .role('textarea', { rows: 6 })
+        .description('该群组专用的用户提示词模板（可选，留空则使用全局配置）'),
+      enabled: Schema.boolean()
+        .description('是否为该群组启用AI总结（可选，留空则继承全局AI配置）')
+    }))
+      .description('监控的群组配置列表（空则监控所有群组）')
       .default([]),
     excludedUsers: Schema.array(Schema.string())
       .description('不监控的用户QQ号列表')

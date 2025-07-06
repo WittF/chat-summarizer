@@ -232,7 +232,16 @@ export class CommandHandler {
     
     // 监控配置
     statusText += '\n👁️ 监控配置:\n'
-    statusText += `• 监控群组: ${this.config.monitor.enabledGroups.length > 0 ? this.config.monitor.enabledGroups.join(', ') : '所有群组'}\n`
+    const groupInfo = this.config.monitor.enabledGroups.length > 0 
+      ? this.config.monitor.enabledGroups.map(group => {
+          const parts = [group.groupId]
+          if (group.systemPrompt) parts.push('(自定义系统提示)')
+          if (group.userPromptTemplate) parts.push('(自定义用户模板)')
+          if (group.enabled !== undefined) parts.push(group.enabled ? '(AI启用)' : '(AI禁用)')
+          return parts.join('')
+        }).join(', ')
+      : '所有群组'
+    statusText += `• 监控群组: ${groupInfo}\n`
     statusText += `• 排除用户: ${this.config.monitor.excludedUsers.length > 0 ? this.config.monitor.excludedUsers.join(', ') : '无'}\n`
     statusText += `• 排除机器人: ${this.config.monitor.excludeBots ? '✅ 是' : '❌ 否'}\n`
     
@@ -285,12 +294,6 @@ export class CommandHandler {
         return
       }
 
-      // 检查AI总结功能
-      if (enableSummarize && !this.aiService.isEnabled()) {
-        await this.sendMessage(session, [h.text('❌ AI总结功能未启用或配置不完整，请检查AI配置')])
-        return
-      }
-
       // 解析群组ID
       let targetGuildId: string | undefined
       
@@ -307,6 +310,13 @@ export class CommandHandler {
       } else {
         // 具体群号
         targetGuildId = guildId
+      }
+
+      // 检查AI总结功能
+      if (enableSummarize && !this.aiService.isEnabled(targetGuildId)) {
+        const guildInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
+        await this.sendMessage(session, [h.text(`❌ AI总结功能未启用或配置不完整，或${guildInfo}已禁用AI功能，请检查AI配置`)])
+        return
       }
 
       // 发送处理中消息

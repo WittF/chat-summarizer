@@ -64,7 +64,8 @@ export function apply(ctx: Context, config: Config) {
 
     // 检查群组过滤
     if (config.monitor.enabledGroups.length > 0) {
-      if (!config.monitor.enabledGroups.includes(session.guildId)) {
+      const enabledGroupIds = config.monitor.enabledGroups.map(group => group.groupId)
+      if (!enabledGroupIds.includes(session.guildId)) {
         return false
       }
     }

@@ -1,3 +1,11 @@
+## [1.7.0](https://github.com/WittF/chat-summarizer/compare/v1.6.0...v1.7.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **file-writer:** 引入安全文件写入器，优化文件写入和更新逻辑 ([6a6190e](https://github.com/WittF/chat-summarizer/commit/6a6190e028518e8406362dfc08c1061e7cb224f9))
+* **md-to-image:** 优化Markdown转图片功能，增加对数字和标点符号的字体处理，修复emoji显示问题 ([b6fef22](https://github.com/WittF/chat-summarizer/commit/b6fef22277b141c9785045c8cb463c958df7b597))
+* **md-to-image:** 增强Markdown转图片功能，优化视口设置和字体渲染，提升图片质量 ([0f475fd](https://github.com/WittF/chat-summarizer/commit/0f475fdee83ea66439b4fd18a20039715677d699))
+
 ## [1.6.0](https://github.com/WittF/chat-summarizer/compare/v1.5.0...v1.6.0) (2025-07-06)
 
 ### ✨ 功能更新
