@@ -1,3 +1,9 @@
+## [1.10.0](https://github.com/WittF/chat-summarizer/compare/v1.9.9...v1.10.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **md-to-image:** 将emoji字体方案改为CDN图片方案 ([8540655](https://github.com/WittF/chat-summarizer/commit/8540655ca68d172c839f136e69b64c36243f5068))
+
 ## [1.9.9](https://github.com/WittF/chat-summarizer/compare/v1.9.8...v1.9.9) (2025-07-06)
 
 ### 🐛 Bug修复
