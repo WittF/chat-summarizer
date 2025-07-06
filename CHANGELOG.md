@@ -1,3 +1,9 @@
+## [1.9.6](https://github.com/WittF/chat-summarizer/compare/v1.9.5...v1.9.6) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 修改字体加载顺序，优先使用emoji字体渲染 ([a00fb24](https://github.com/WittF/chat-summarizer/commit/a00fb24c5f50bb91c70933367dd3f2d705a5e41d))
+
 ## [1.9.5](https://github.com/WittF/chat-summarizer/compare/v1.9.4...v1.9.5) (2025-07-06)
 
 ### 🐛 Bug修复
