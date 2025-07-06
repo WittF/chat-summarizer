@@ -51,7 +51,7 @@ export class MarkdownToImageService {
         src: url(data:font/woff2;base64,${interRegular}) format('woff2');
         font-weight: normal;
         font-style: normal;
-        font-display: swap;
+        font-display: block;
       }
       
       @font-face {
@@ -59,7 +59,7 @@ export class MarkdownToImageService {
         src: url(data:font/woff2;base64,${interBold}) format('woff2');
         font-weight: bold;
         font-style: normal;
-        font-display: swap;
+        font-display: block;
       }
       
       /* 主要中文字体 - Noto Sans CJK 简体 */
@@ -68,7 +68,7 @@ export class MarkdownToImageService {
         src: url(data:font/opentype;base64,${notoSansCJKscRegular}) format('opentype');
         font-weight: normal;
         font-style: normal;
-        font-display: swap;
+        font-display: block;
       }
       
       @font-face {
@@ -76,7 +76,7 @@ export class MarkdownToImageService {
         src: url(data:font/opentype;base64,${notoSansCJKscBold}) format('opentype');
         font-weight: bold;
         font-style: normal;
-        font-display: swap;
+        font-display: block;
       }
       
       /* 中文字体fallback 1 - Noto Sans CJK 繁体 */
@@ -85,7 +85,7 @@ export class MarkdownToImageService {
         src: url(data:font/opentype;base64,${notoSansCJKtcRegular}) format('opentype');
         font-weight: normal;
         font-style: normal;
-        font-display: swap;
+        font-display: block;
       }
       
       /* 中文字体fallback 2 - 思源黑体 */
@@ -94,7 +94,7 @@ export class MarkdownToImageService {
         src: url(data:font/opentype;base64,${sourceHanSansRegular}) format('opentype');
         font-weight: normal;
         font-style: normal;
-        font-display: swap;
+        font-display: block;
       }
       
       /* Emoji字体 */
@@ -103,7 +103,7 @@ export class MarkdownToImageService {
         src: url(data:font/truetype;base64,${notoColorEmoji}) format('truetype');
         font-weight: normal;
         font-style: normal;
-        font-display: swap;
+        font-display: block;
       }
     `
   }
@@ -246,17 +246,26 @@ export class MarkdownToImageService {
               const fonts = ['Inter', 'NotoSansCJKsc', 'NotoColorEmoji']
               return fonts.every(font => document.fonts.check(`16px "${font}"`))
             },
-            { timeout: 8000 }
+            { timeout: 15000 }
           )
           this.logger.info('所有字体加载完成')
         } catch (e) {
           this.logger.warn('部分字体加载超时，使用fallback字体继续渲染')
           
-          // 特别检查emoji字体加载状态
+          // 检查各个字体的加载状态
           try {
-            const emojiFontLoaded = await page.evaluate(() => {
-              return document.fonts.check('16px "NotoColorEmoji"')
+            const fontStatus = await page.evaluate(() => {
+              const fonts = ['Inter', 'NotoSansCJKsc', 'NotoColorEmoji']
+              return fonts.map(font => ({
+                name: font,
+                loaded: document.fonts.check(`16px "${font}"`)
+              }))
             })
+            
+            this.logger.info('字体加载状态:', fontStatus)
+            
+            // 特别检查emoji字体加载状态
+            const emojiFontLoaded = fontStatus.find(f => f.name === 'NotoColorEmoji')?.loaded
             
             if (!emojiFontLoaded) {
               this.logger.warn('Emoji字体加载失败，尝试使用系统emoji字体')
