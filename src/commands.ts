@@ -3,9 +3,12 @@ import { Config, PluginStats } from './types'
 import { DatabaseOperations } from './database'
 import { S3Uploader } from './s3-uploader'
 import { safeJsonParse } from './utils'
+import { ExportManager, ExportRequest } from './export'
 
 // 命令处理类
 export class CommandHandler {
+  private exportManager: ExportManager
+
   constructor(
     private ctx: Context,
     private config: Config,
@@ -13,7 +16,9 @@ export class CommandHandler {
     private s3Uploader: S3Uploader | null,
     private getStorageDir: (subDir: string) => string,
     private getNextExecutionTime: (targetTime: string) => Date
-  ) {}
+  ) {
+    this.exportManager = new ExportManager(ctx, s3Uploader, getStorageDir)
+  }
 
   // 处理用户ID，去除平台前缀，只保留QQ号
   private normalizeQQId(userId: string): string {
@@ -57,6 +62,16 @@ export class CommandHandler {
     this.ctx.command('cs.geturl', '获取回复消息中图片/文件的S3链接（仅管理员可用）')
       .action(async ({ session }) => {
         await this.handleGetUrlCommand(session)
+      })
+
+    // 导出命令
+    this.ctx.command('cs.export <guildId> <timeRange> [format]', '导出聊天记录（仅管理员可用）')
+      .option('format', '-f <format:string>', { fallback: 'json' })
+      .example('cs.export current yesterday - 导出当前群昨天的记录')
+      .example('cs.export 123456789 2024-01-01,2024-01-31 txt - 导出指定群1月份记录为文本格式')
+      .example('cs.export current last7days csv - 导出当前群最近7天记录为CSV格式')
+      .action(async ({ session, options }, guildId, timeRange, format) => {
+        await this.handleExportCommand(session, guildId, timeRange, format || options?.format || 'json')
       })
   }
 
@@ -211,5 +226,69 @@ export class CommandHandler {
     }
     
     return statusText
+  }
+
+  // 处理导出命令
+  private async handleExportCommand(session: Session, guildId: string, timeRange: string, format: string): Promise<void> {
+    try {
+      // 检查权限
+      if (!this.isAdmin(session.userId)) {
+        await this.sendMessage(session, [h.text('权限不足，只有管理员才能使用此命令')])
+        return
+      }
+
+      // 验证格式
+      const validFormats = ['json', 'txt', 'csv']
+      if (!validFormats.includes(format.toLowerCase())) {
+        await this.sendMessage(session, [h.text(`❌ 无效的导出格式: ${format}\n\n支持的格式: ${validFormats.join(', ')}`)])
+        return
+      }
+
+      // 解析群组ID
+      let targetGuildId: string | undefined
+      
+      if (guildId.toLowerCase() === 'current') {
+        // 使用当前群组
+        if (!session.guildId) {
+          await this.sendMessage(session, [h.text('❌ 当前不在群聊中，无法使用 "current" 参数')])
+          return
+        }
+        targetGuildId = session.guildId
+      } else if (guildId.toLowerCase() === 'private') {
+        // 私聊记录
+        targetGuildId = undefined
+      } else {
+        // 具体群号
+        targetGuildId = guildId
+      }
+
+      // 发送处理中消息
+      await this.sendMessage(session, [h.text('🔄 正在处理导出请求，请稍候...')])
+
+      // 构建导出请求
+      const exportRequest: ExportRequest = {
+        guildId: targetGuildId,
+        timeRange: timeRange,
+        format: format.toLowerCase() as 'json' | 'txt' | 'csv'
+      }
+
+      // 执行导出
+      const result = await this.exportManager.exportChatData(exportRequest)
+
+      if (result.success && result.s3Url) {
+        // 导出成功
+        await this.sendMessage(session, [
+          h.text(result.message || '导出成功！'),
+          h.text(`\n\n📥 下载链接: ${result.s3Url}`)
+        ])
+      } else {
+        // 导出失败
+        await this.sendMessage(session, [h.text(result.error || '导出失败')])
+      }
+
+    } catch (error: any) {
+      console.error('处理导出命令失败:', error)
+      await this.sendMessage(session, [h.text(`❌ 导出过程中发生错误: ${error?.message || '未知错误'}`)])
+    }
   }
 } 

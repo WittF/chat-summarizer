@@ -489,8 +489,6 @@ export class S3Uploader {
     return allowedTypes.map(type => type.toLowerCase()).includes(extension)
   }
 
-
-
   /**
    * 测试S3连接
    */
@@ -498,10 +496,9 @@ export class S3Uploader {
     try {
       // 尝试上传一个小的测试文件
       const testContent = 'koishi-chat-summarizer-test'
-      const now = Date.now()
-      const testKey = `test/connection_test_${now}.txt`
+      const testKey = `test/${Date.now()}.txt`
       
-      const result = await this.uploadText(testContent, testKey)
+      const result = await this.uploadText(testContent, testKey, 'text/plain')
       
       if (result.success) {
         // 测试成功，可以选择删除测试文件
@@ -510,7 +507,118 @@ export class S3Uploader {
         return { success: false, error: result.error }
       }
     } catch (error: any) {
-      return { success: false, error: error?.message || '连接测试失败' }
+      return { success: false, error: handleError(error, 'S3连接测试失败') }
+    }
+  }
+
+  /**
+   * 获取S3存储桶中的文件列表
+   */
+  public async listFiles(prefix?: string): Promise<{ success: boolean; files?: string[]; error?: string }> {
+    try {
+      const { ListObjectsV2Command } = await import('@aws-sdk/client-s3')
+      
+      // 处理路径前缀
+      let fullPrefix = prefix || ''
+      if (this.config.pathPrefix && this.config.pathPrefix.trim() !== '') {
+        const cleanPrefix = this.config.pathPrefix.replace(/^\/+|\/+$/g, '')
+        if (cleanPrefix) {
+          fullPrefix = fullPrefix ? `${cleanPrefix}/${fullPrefix}` : cleanPrefix
+        }
+      }
+
+      const command = new ListObjectsV2Command({
+        Bucket: this.config.bucket,
+        Prefix: fullPrefix,
+        MaxKeys: 1000 // 限制返回数量，避免过多文件
+      })
+
+      const response = await this.client.send(command)
+      
+      if (response.Contents) {
+        const files = response.Contents
+          .filter(obj => obj.Key && obj.Size && obj.Size > 0) // 过滤掉空文件和目录
+          .map(obj => obj.Key!)
+          .filter(key => {
+            // 去除路径前缀，只返回相对路径
+            if (this.config.pathPrefix) {
+              const cleanPrefix = this.config.pathPrefix.replace(/^\/+|\/+$/g, '')
+              if (cleanPrefix && key.startsWith(cleanPrefix + '/')) {
+                return key.substring(cleanPrefix.length + 1)
+              }
+            }
+            return key
+          })
+
+        return { success: true, files }
+      }
+
+      return { success: true, files: [] }
+    } catch (error: any) {
+      return { success: false, error: handleError(error, '获取文件列表失败') }
+    }
+  }
+
+  /**
+   * 下载S3文件到本地
+   */
+  public async downloadFile(s3Key: string, localPath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3')
+      
+      // 处理完整的S3键名
+      let fullKey = s3Key
+      if (this.config.pathPrefix && this.config.pathPrefix.trim() !== '') {
+        const cleanPrefix = this.config.pathPrefix.replace(/^\/+|\/+$/g, '')
+        if (cleanPrefix && !s3Key.startsWith(cleanPrefix + '/')) {
+          fullKey = `${cleanPrefix}/${s3Key}`
+        }
+      }
+
+      const command = new GetObjectCommand({
+        Bucket: this.config.bucket,
+        Key: fullKey
+      })
+
+      const response = await this.client.send(command)
+      
+      if (response.Body) {
+        // 将流转换为Buffer
+        const chunks: Uint8Array[] = []
+        const reader = response.Body as any
+        
+        if (reader.getReader) {
+          // ReadableStream
+          const readerInstance = reader.getReader()
+          while (true) {
+            const { done, value } = await readerInstance.read()
+            if (done) break
+            chunks.push(value)
+          }
+        } else if (reader.read) {
+          // Node.js stream
+          const fs = await import('fs')
+          const stream = fs.createWriteStream(localPath)
+          reader.pipe(stream)
+          return new Promise((resolve) => {
+            stream.on('finish', () => resolve({ success: true }))
+            stream.on('error', (error) => resolve({ success: false, error: error.message }))
+          })
+        } else {
+          // Buffer or string
+          chunks.push(new Uint8Array(Buffer.from(response.Body as any)))
+        }
+
+        const buffer = Buffer.concat(chunks)
+        const fs = await import('fs/promises')
+        await fs.writeFile(localPath, buffer)
+        
+        return { success: true }
+      }
+
+      return { success: false, error: '下载内容为空' }
+    } catch (error: any) {
+      return { success: false, error: handleError(error, '下载文件失败') }
     }
   }
 } 
