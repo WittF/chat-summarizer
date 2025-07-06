@@ -1,3 +1,19 @@
+## [1.2.0](https://github.com/WittF/chat-summarizer/compare/v1.1.0...v1.2.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **commands:** 优化S3链接信息的格式，移除多余的换行符 ([b2c8270](https://github.com/WittF/chat-summarizer/commit/b2c82708f0ff84d373aa379e76d3ae0481631e05))
+* **database:** 添加数据库自动清理机制，将数据库用作24小时缓存 ([32d2606](https://github.com/WittF/chat-summarizer/commit/32d2606770c21fd76ec56faf30da6a48440e9a77))
+* **export:** 添加cs.export命令，支持智能导出历史聊天记录 ([1306c50](https://github.com/WittF/chat-summarizer/commit/1306c506728568831cb4a2b0497a05fa23bd3f06))
+
+### 🐛 Bug修复
+
+* **commands:** 优化cs.geturl命令错误提示，明确说明数据库缓存限制 ([6b835a1](https://github.com/WittF/chat-summarizer/commit/6b835a12c19d2c2e8eb62e9709812d2c5da677cc))
+
+### 🔧 其他更改
+
+* **readme:** 移除开发部分内容，更新文档结构 ([619df1b](https://github.com/WittF/chat-summarizer/commit/619df1ba2515e540920a7528a433d181c14cd6a3))
+
 ## [1.1.0](https://github.com/WittF/chat-summarizer/compare/v1.0.0...v1.1.0) (2025-07-06)
 
 ### ✨ 功能更新
