@@ -26,6 +26,7 @@ export class MarkdownToImageService {
       <html>
       <head>
         <meta charset="utf-8">
+        <link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
         <style>
           ${githubCss}
           .markdown-body {
@@ -37,11 +38,11 @@ export class MarkdownToImageService {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Twemoji Mozilla', sans-serif;
           }
           body {
             background-color: #f6f8fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Twemoji Mozilla', sans-serif;
             margin: 20px;
           }
           h1 {
@@ -92,6 +93,11 @@ export class MarkdownToImageService {
         
         // 等待页面加载完成
         await page.waitForSelector('.markdown-body')
+        
+        // 等待字体加载完成
+        await page.evaluate(() => {
+          return document.fonts.ready
+        })
         
         // 获取内容区域并截图
         const element = await page.$('.markdown-body')
