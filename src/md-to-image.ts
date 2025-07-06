@@ -169,10 +169,12 @@ export class MarkdownToImageService {
       try {
         // 将emoji转换为Unicode码点
         const codePoint = this.getEmojiCodePoint(match)
-                 if (codePoint) {
-           convertedCount++
-           return `<img class="emoji" src="${emojiBaseUrl}${codePoint}.png" alt="${match}" loading="eager" onerror="this.outerHTML='<span class=\\"emoji-text\\">${match}</span>'">`
-         }
+        if (codePoint) {
+          convertedCount++
+          // 使用数据属性存储原始emoji，避免HTML属性转义问题
+          const emojiData = encodeURIComponent(match)
+          return `<img class="emoji" src="${emojiBaseUrl}${codePoint}.png" alt="emoji" data-emoji="${emojiData}" loading="eager">`
+        }
         return match
       } catch (error) {
         this.logger.debug(`无法转换emoji: ${match}`, error)
@@ -380,6 +382,24 @@ export class MarkdownToImageService {
               
               if (loadedCount >= totalImages) {
                 console.log('✅ 所有emoji图片加载完成')
+                
+                // 处理加载失败的emoji图片，替换为文本
+                const failedImages = document.querySelectorAll('img.emoji[src=""]') as NodeListOf<HTMLImageElement>
+                failedImages.forEach((img) => {
+                  const emojiData = img.getAttribute('data-emoji')
+                  if (emojiData) {
+                    try {
+                      const originalEmoji = decodeURIComponent(emojiData)
+                      const span = document.createElement('span')
+                      span.className = 'emoji-text'
+                      span.textContent = originalEmoji
+                      img.parentNode?.replaceChild(span, img)
+                    } catch (e) {
+                      console.log('⚠️ 解码emoji失败:', emojiData)
+                    }
+                  }
+                })
+                
                 resolve(undefined)
               }
             }
@@ -387,11 +407,22 @@ export class MarkdownToImageService {
             emojiImages.forEach((img) => {
               const image = img as HTMLImageElement
               if (image.complete) {
+                // 检查图片是否实际加载成功
+                if (image.naturalWidth === 0) {
+                  console.log(`⚠️ emoji图片加载失败: ${image.src}`)
+                  // 标记为失败，稍后处理
+                  image.src = ''
+                }
                 checkAllLoaded()
               } else {
-                image.onload = checkAllLoaded
+                image.onload = () => {
+                  console.log(`✅ emoji图片加载成功: ${image.src}`)
+                  checkAllLoaded()
+                }
                 image.onerror = () => {
                   console.log(`⚠️ emoji图片加载失败: ${image.src}`)
+                  // 标记为失败，稍后处理
+                  image.src = ''
                   checkAllLoaded()
                 }
               }
@@ -401,6 +432,13 @@ export class MarkdownToImageService {
             setTimeout(() => {
               if (loadedCount < totalImages) {
                 console.log(`⏰ emoji图片加载超时，已加载${loadedCount}/${totalImages}`)
+                // 将剩余未加载的图片标记为失败
+                emojiImages.forEach((img) => {
+                  const image = img as HTMLImageElement
+                  if (!image.complete || image.naturalWidth === 0) {
+                    image.src = ''
+                  }
+                })
               }
               resolve(undefined)
             }, 5000)

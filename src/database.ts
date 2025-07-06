@@ -1,5 +1,5 @@
 import { Context } from 'koishi'
-import { ChatRecord, ImageRecord, FileRecord, VideoRecord, PluginStats } from './types'
+import { ChatRecord, ImageRecord, FileRecord, VideoRecord, ChatLogFileRecord, PluginStats } from './types'
 
 // 扩展数据库模型
 export function extendDatabase(ctx: Context) {
@@ -60,6 +60,22 @@ export function extendDatabase(ctx: Context) {
   }, {
     autoInc: true,
   })
+
+  ctx.model.extend('chat_log_files', {
+    id: 'unsigned',
+    guildId: 'string',
+    date: 'string',
+    filePath: 'string',
+    s3Key: 'string',
+    s3Url: 'string',
+    fileSize: 'unsigned',
+    recordCount: 'unsigned',
+    uploadedAt: 'unsigned',
+    status: 'string',
+    error: 'text'
+  }, {
+    autoInc: true,
+  })
 }
 
 // 数据库操作类
@@ -90,6 +106,36 @@ export class DatabaseOperations {
     return (result as any)[0] as VideoRecord
   }
 
+  // 创建聊天记录文件上传记录
+  async createChatLogFileRecord(record: Omit<ChatLogFileRecord, 'id'>): Promise<ChatLogFileRecord> {
+    const result = await this.ctx.database.create('chat_log_files', record)
+    return (result as any)[0] as ChatLogFileRecord
+  }
+
+  // 更新聊天记录文件上传记录
+  async updateChatLogFileRecord(id: number, updates: Partial<ChatLogFileRecord>): Promise<void> {
+    await this.ctx.database.set('chat_log_files', { id }, updates)
+  }
+
+  // 检查某日期某群组的文件是否已上传
+  async checkChatLogFileUploaded(date: string, guildId?: string): Promise<boolean> {
+    const records = await this.ctx.database.get('chat_log_files', {
+      date,
+      guildId,
+      status: 'uploaded'
+    })
+    return records.length > 0
+  }
+
+  // 获取聊天记录文件上传记录
+  async getChatLogFileRecord(date: string, guildId?: string): Promise<ChatLogFileRecord | null> {
+    const records = await this.ctx.database.get('chat_log_files', {
+      date,
+      guildId
+    })
+    return records.length > 0 ? records[0] : null
+  }
+
   // 更新聊天记录
   async updateChatRecord(messageId: string, updates: Partial<ChatRecord>): Promise<void> {
     await this.ctx.database.set('chat_records', { messageId }, updates)
@@ -103,16 +149,31 @@ export class DatabaseOperations {
     })
   }
 
-  // 批量标记为已上传
+  // 批量标记为已上传 - 使用分页处理避免内存溢出
   async markAsUploaded(recordIds: number[]): Promise<void> {
-    if (recordIds.length > 0) {
+    if (recordIds.length === 0) return
+    
+    // 分页处理，每次最多处理1000条记录
+    const batchSize = 1000
+    const totalBatches = Math.ceil(recordIds.length / batchSize)
+    
+    for (let i = 0; i < totalBatches; i++) {
+      const start = i * batchSize
+      const end = Math.min(start + batchSize, recordIds.length)
+      const batch = recordIds.slice(start, end)
+      
       await this.ctx.database.set('chat_records', 
-        { id: { $in: recordIds } }, 
+        { id: { $in: batch } }, 
         {
           isUploaded: true,
           uploadedAt: Date.now()
         }
       )
+      
+      // 如果有多个批次，添加小延迟避免数据库压力
+      if (totalBatches > 1 && i < totalBatches - 1) {
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
     }
   }
 

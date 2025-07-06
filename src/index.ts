@@ -518,80 +518,96 @@ export function apply(ctx: Context, config: Config) {
   // 检查指定日期和群组是否已经上传过
   const checkIfDateGroupAlreadyUploaded = async (date: Date, groupKey: string): Promise<boolean> => {
     try {
+      const dateStr = getDateStringInUTC8(date.getTime())
+      const guildIdCondition = groupKey === 'private' ? undefined : groupKey
+      
+      // 🔑 使用新的 chat_log_files 表来检查上传状态
+      const isAlreadyUploaded = await dbOps.checkChatLogFileUploaded(dateStr, guildIdCondition)
+      
+      if (isAlreadyUploaded) {
+        logger.debug(`群组 ${groupKey} 在 ${dateStr} 的记录已上传`)
+        return true
+      }
+
+      // 如果没有上传记录，检查是否有该日期的聊天记录
       const startTime = new Date(date)
       startTime.setHours(0, 0, 0, 0)
       
       const endTime = new Date(date)
       endTime.setHours(23, 59, 59, 999)
       
-      // 查询该日期和群组的记录
-      const guildIdCondition = groupKey === 'private' ? undefined : groupKey
-      
-      // 检查是否有该日期的记录
       const totalRecords = await ctx.database.get('chat_records', {
         timestamp: { $gte: startTime.getTime(), $lte: endTime.getTime() },
         guildId: guildIdCondition
       })
 
-      // 如果没有任何记录，说明该日期该群组没有消息，跳过
       if (totalRecords.length === 0) {
-        const dateStr = getDateStringInUTC8(date.getTime())
         logger.debug(`群组 ${groupKey} 在 ${dateStr} 没有消息记录`)
         return true // 返回true表示"跳过上传"
       }
 
-      // 检查是否已经全部上传
-      const unuploadedRecords = await ctx.database.get('chat_records', {
-        timestamp: { $gte: startTime.getTime(), $lte: endTime.getTime() },
-        guildId: guildIdCondition,
-        isUploaded: false
-      })
-
-      const isFullyUploaded = unuploadedRecords.length === 0
-      
-      const dateStr = getDateStringInUTC8(date.getTime())
-      if (isFullyUploaded) {
-        logger.debug(`群组 ${groupKey} 在 ${dateStr} 的 ${totalRecords.length} 条记录已全部上传`)
-      } else {
-        logger.debug(`群组 ${groupKey} 在 ${dateStr} 还有 ${unuploadedRecords.length}/${totalRecords.length} 条未上传记录`)
-      }
-
-      return isFullyUploaded
+      logger.debug(`群组 ${groupKey} 在 ${dateStr} 有 ${totalRecords.length} 条记录待上传`)
+      return false
     } catch (error: any) {
       logger.error(`检查上传状态失败 (群组: ${groupKey})`, error)
       return false // 出错时允许上传，避免阻塞
     }
   }
 
-  // 标记指定日期和群组的记录为已上传
-  const markDateRecordsAsUploaded = async (date: Date, groupKey: string): Promise<void> => {
+  // 创建或更新聊天记录文件上传记录
+  const createOrUpdateChatLogFileRecord = async (
+    date: Date, 
+    groupKey: string, 
+    filePath: string, 
+    s3Key: string, 
+    fileSize: number, 
+    recordCount: number,
+    s3Url?: string,
+    status: 'pending' | 'uploading' | 'uploaded' | 'failed' = 'pending',
+    error?: string
+  ): Promise<void> => {
     try {
-      const startTime = new Date(date)
-      startTime.setHours(0, 0, 0, 0)
-      
-      const endTime = new Date(date)
-      endTime.setHours(23, 59, 59, 999)
-      
-      // 查询该日期和群组的记录
+      const dateStr = getDateStringInUTC8(date.getTime())
       const guildIdCondition = groupKey === 'private' ? undefined : groupKey
-      const records = await ctx.database.get('chat_records', {
-        timestamp: { $gte: startTime.getTime(), $lte: endTime.getTime() },
-        guildId: guildIdCondition,
-        isUploaded: false
-      })
-
-      if (records.length > 0) {
-        const recordIds = records.map(r => r.id!).filter(id => id)
-        await dbOps.markAsUploaded(recordIds)
+      
+      // 检查是否已存在记录
+      const existingRecord = await dbOps.getChatLogFileRecord(dateStr, guildIdCondition)
+      
+      if (existingRecord) {
+        // 更新现有记录
+        await dbOps.updateChatLogFileRecord(existingRecord.id!, {
+          s3Url,
+          fileSize,
+          recordCount,
+          status,
+          error,
+          uploadedAt: status === 'uploaded' ? Date.now() : existingRecord.uploadedAt
+        })
         
-        // 只在调试模式下记录详细信息
         if (config.debug) {
-          const dateStr = getDateStringInUTC8(date.getTime())
-          logger.info(`已标记 ${records.length} 条记录为已上传 (群组: ${groupKey}, 日期: ${dateStr})`)
+          logger.info(`已更新聊天记录文件上传记录 (群组: ${groupKey}, 日期: ${dateStr}, 状态: ${status})`)
+        }
+      } else {
+        // 创建新记录
+        await dbOps.createChatLogFileRecord({
+          guildId: guildIdCondition,
+          date: dateStr,
+          filePath,
+          s3Key,
+          s3Url,
+          fileSize,
+          recordCount,
+          uploadedAt: status === 'uploaded' ? Date.now() : 0,
+          status,
+          error
+        })
+        
+        if (config.debug) {
+          logger.info(`已创建聊天记录文件上传记录 (群组: ${groupKey}, 日期: ${dateStr}, 状态: ${status})`)
         }
       }
     } catch (error: any) {
-      logger.error(`标记记录为已上传失败 (群组: ${groupKey})`, error)
+      logger.error(`创建或更新聊天记录文件上传记录失败 (群组: ${groupKey})`, error)
     }
   }
 
@@ -726,14 +742,45 @@ export function apply(ctx: Context, config: Config) {
               logger.info(`✅ 群组 ${fileToUpload.groupKey} 上传成功: ${result.url}`)
             }
             
+            // 获取文件大小和记录数
+            const fileStats = await fs.stat(fileToUpload.filePath)
+            const fileSize = fileStats.size
+            
+            // 统计文件中的记录数
+            const fileContent = await fs.readFile(fileToUpload.filePath, 'utf-8')
+            const recordCount = fileContent.split('\n').filter(line => line.trim().length > 0).length
+            
+            // 创建或更新聊天记录文件上传记录
+            await createOrUpdateChatLogFileRecord(
+              yesterday, 
+              fileToUpload.groupKey, 
+              fileToUpload.filePath, 
+              fileToUpload.key, 
+              fileSize, 
+              recordCount,
+              result.url,
+              'uploaded'
+            )
+            
             // 上传成功后删除本地文件（根据保留天数配置）
             await handleFileRetention(fileToUpload.filePath, fileToUpload.groupKey, yesterday)
             
-            // 标记数据库中对应日期的记录为已上传
-            await markDateRecordsAsUploaded(yesterday, fileToUpload.groupKey)
-            
           } else {
             logger.error(`❌ 群组 ${fileToUpload.groupKey} 上传失败: ${result.error}`)
+            
+            // 记录失败状态
+            const fileStats = await fs.stat(fileToUpload.filePath).catch(() => ({ size: 0 }))
+            await createOrUpdateChatLogFileRecord(
+              yesterday, 
+              fileToUpload.groupKey, 
+              fileToUpload.filePath, 
+              fileToUpload.key, 
+              fileStats.size, 
+              0,
+              undefined,
+              'failed',
+              result.error
+            )
           }
           
           return resultWithMeta

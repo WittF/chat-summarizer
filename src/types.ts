@@ -111,6 +111,21 @@ export interface VideoRecord {
   messageId: string       // 关联的消息ID
 }
 
+// 聊天记录文件上传记录
+export interface ChatLogFileRecord {
+  id?: number              // 数据库自增ID
+  guildId?: string         // 群组ID，undefined表示私聊
+  date: string            // 日期字符串，格式: YYYY-MM-DD
+  filePath: string        // 本地文件路径
+  s3Key: string           // S3对象键
+  s3Url?: string          // S3访问URL
+  fileSize: number        // 文件大小（字节）
+  recordCount: number     // 该文件包含的聊天记录数
+  uploadedAt: number      // 上传时间戳
+  status: 'pending' | 'uploading' | 'uploaded' | 'failed'  // 上传状态
+  error?: string          // 错误信息（如果失败）
+}
+
 // 插件统计信息
 export interface PluginStats {
   totalMessages: number
@@ -126,5 +141,6 @@ declare module 'koishi' {
     image_records: ImageRecord
     file_records: FileRecord
     video_records: VideoRecord
+    chat_log_files: ChatLogFileRecord
   }
 } 
