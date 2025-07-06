@@ -1,3 +1,9 @@
+## [1.11.1](https://github.com/WittF/chat-summarizer/compare/v1.11.0...v1.11.1) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **s3-uploader:** 修复S3上传卡住导致消息处理阻塞的问题 ([b409b65](https://github.com/WittF/chat-summarizer/commit/b409b654b7d36fc082d153cb4c50d51d1373a1d4))
+
 ## [1.11.0](https://github.com/WittF/chat-summarizer/compare/v1.10.0...v1.11.0) (2025-07-06)
 
 ### ✨ 功能更新
