@@ -1,3 +1,9 @@
+## [1.9.9](https://github.com/WittF/chat-summarizer/compare/v1.9.8...v1.9.9) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 增加渲染队列管理，优化并发渲染处理逻辑 ([eee1ba3](https://github.com/WittF/chat-summarizer/commit/eee1ba308a29e23bbf9ad05f3a907a11b9936c37))
+
 ## [1.9.8](https://github.com/WittF/chat-summarizer/compare/v1.9.7...v1.9.8) (2025-07-06)
 
 ### 🐛 Bug修复
