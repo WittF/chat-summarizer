@@ -1,3 +1,9 @@
+## [1.9.8](https://github.com/WittF/chat-summarizer/compare/v1.9.7...v1.9.8) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 更新字体CSS生成逻辑，支持Google Fonts并优化emoji字体加载策略 ([062fb8d](https://github.com/WittF/chat-summarizer/commit/062fb8d0db4ad8a5b4af82686b3e9f8eb3f3ca7f))
+
 ## [1.9.7](https://github.com/WittF/chat-summarizer/compare/v1.9.6...v1.9.7) (2025-07-06)
 
 ### 🐛 Bug修复
