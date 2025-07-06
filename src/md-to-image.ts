@@ -171,9 +171,18 @@ export class MarkdownToImageService {
         const codePoint = this.getEmojiCodePoint(match)
         if (codePoint) {
           convertedCount++
-          // 使用数据属性存储原始emoji，避免HTML属性转义问题
-          const emojiData = encodeURIComponent(match)
-          return `<img class="emoji" src="${emojiBaseUrl}${codePoint}.png" alt="emoji" data-emoji="${emojiData}" loading="eager">`
+          // 简化处理，只转义基本字符，使用简单的onerror fallback
+          const escapedMatch = match.replace(/["'<>&]/g, (char) => {
+            switch (char) {
+              case '"': return '&quot;'
+              case "'": return '&#39;'
+              case '<': return '&lt;'
+              case '>': return '&gt;'
+              case '&': return '&amp;'
+              default: return char
+            }
+          })
+          return `<img class="emoji" src="${emojiBaseUrl}${codePoint}.png" alt="${escapedMatch}" loading="eager" onerror="this.style.display='none'">`
         }
         return match
       } catch (error) {
@@ -394,19 +403,6 @@ export class MarkdownToImageService {
                 image.onload = checkAllLoaded
                 image.onerror = () => {
                   console.log(`⚠️ emoji图片加载失败: ${image.src}`)
-                  // 简单的fallback处理：用data-emoji属性中的原始emoji替换
-                  const emojiData = image.getAttribute('data-emoji')
-                  if (emojiData) {
-                    try {
-                      const originalEmoji = decodeURIComponent(emojiData)
-                      const span = document.createElement('span')
-                      span.className = 'emoji-text'
-                      span.textContent = originalEmoji
-                      image.parentNode?.replaceChild(span, image)
-                    } catch (e) {
-                      console.log('⚠️ 解码emoji失败:', emojiData)
-                    }
-                  }
                   checkAllLoaded()
                 }
               }
