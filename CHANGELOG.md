@@ -1,3 +1,9 @@
+## [1.6.0](https://github.com/WittF/chat-summarizer/compare/v1.5.0...v1.6.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **message:** 添加小程序分享卡片解析 ([559938a](https://github.com/WittF/chat-summarizer/commit/559938a9acc6252a176f723f7eacbc5d9c8b9c70))
+
 ## [1.5.0](https://github.com/WittF/chat-summarizer/compare/v1.4.1...v1.5.0) (2025-07-06)
 
 ### ✨ 功能更新
