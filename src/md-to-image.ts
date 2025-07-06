@@ -50,15 +50,19 @@ export class MarkdownToImageService {
   }
 
   /**
-   * 生成字体CSS - hybrid策略，平衡性能和可靠性
+   * 生成字体CSS和Google Fonts链接
    */
-  private generateFontCSS(): string {
+  private generateFontCSS(): { css: string; useGoogleFonts: boolean } {
     // 英文字体（小文件，优先加载）
     const interRegular = this.getFontBase64('Inter-Regular.woff2')
     const interBold = this.getFontBase64('Inter-Bold.woff2')
     
-    // Emoji字体（大文件，但关键）
-    const notoColorEmoji = this.getFontBase64('NotoColorEmoji.ttf')
+    // 尝试加载新的emoji字体文件
+    let notoColorEmoji = this.getFontBase64('NotoColorEmoji-Regular.ttf')
+    if (!notoColorEmoji) {
+      // 如果新文件不存在，尝试旧文件
+      notoColorEmoji = this.getFontBase64('NotoColorEmoji.ttf')
+    }
     
     // 至少保留一个中文字体作为fallback
     const notoSansCJKscRegular = this.getFontBase64('NotoSansCJKsc-Regular.otf')
@@ -72,13 +76,17 @@ export class MarkdownToImageService {
     }
     
     this.logger.info('字体文件读取状态:', fontStatus)
-
-    // 如果emoji字体读取失败，记录警告
-    if (!fontStatus.notoColorEmoji) {
-      this.logger.warn('Emoji字体文件读取失败，将完全依赖系统字体，可能在某些环境下显示异常')
+    
+    const useGoogleFonts = !fontStatus.notoColorEmoji
+    
+    if (useGoogleFonts) {
+      this.logger.warn('❌ 本地NotoColorEmoji字体文件读取失败，将使用Google Fonts云端字体')
+      this.logger.info('🌐 启用Google Fonts: Noto Color Emoji')
+    } else {
+      this.logger.info('✅ 本地NotoColorEmoji字体文件读取成功')
     }
 
-    return `
+    const css = `
       ${interRegular ? `
       /* 英文字体 */
       @font-face {
@@ -99,13 +107,13 @@ export class MarkdownToImageService {
       }` : ''}
       
       ${notoColorEmoji ? `
-      /* Emoji字体 - 移除unicode-range限制，应用于所有字符 */
+      /* 本地Emoji字体 - 最高优先级 */
       @font-face {
         font-family: 'NotoColorEmoji';
         src: url(data:font/truetype;base64,${notoColorEmoji}) format('truetype');
         font-weight: normal;
         font-style: normal;
-        font-display: fallback;
+        font-display: block;
       }` : ''}
       
       ${notoSansCJKscRegular ? `
@@ -119,6 +127,8 @@ export class MarkdownToImageService {
         unicode-range: U+4E00-9FFF, U+3400-4DBF, U+20000-2A6DF, U+2A700-2B73F, U+2B740-2B81F, U+2B820-2CEAF, U+2CEB0-2EBEF;
       }` : ''}
     `
+    
+    return { css, useGoogleFonts }
   }
 
   /**
@@ -133,7 +143,7 @@ export class MarkdownToImageService {
     const githubCss = readFileSync(githubCssPath, 'utf-8')
     
     // 生成字体CSS
-    const fontCSS = this.generateFontCSS()
+    const fontConfig = this.generateFontCSS()
     
     // 创建HTML模板
     const html = `
@@ -142,14 +152,19 @@ export class MarkdownToImageService {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${fontConfig.useGoogleFonts ? `
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+        ` : ''}
         <style>
-          ${fontCSS}
+          ${fontConfig.css}
           ${githubCss}
           
-          /* 完整的字体fallback策略 - emoji字体优先 */
+          /* Emoji优先字体策略 */
           body {
             background-color: #f6f8fa;
-            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
+            font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
             margin: 20px;
           }
           
@@ -162,13 +177,13 @@ export class MarkdownToImageService {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
+            font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
             line-height: 1.6;
           }
           
-          /* 中文文本专用样式 */
+          /* 所有文本元素都使用emoji优先字体 */
           .markdown-body p, .markdown-body li, .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 {
-            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
+            font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
           }
           
           /* 代码块使用等宽字体，包含中文支持 */
@@ -207,7 +222,7 @@ export class MarkdownToImageService {
           /* 粗体文本确保使用粗体字体 */
           .markdown-body strong, .markdown-body b {
             font-weight: bold;
-            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
+            font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', 'Wenquanyi Micro Hei', 'WenQuanYi Zen Hei', 'ST Heiti', SimHei, 'WenQuanYi Zen Hei Sharp';
           }
           
           .ai-summary-title {
@@ -251,7 +266,7 @@ export class MarkdownToImageService {
         // 智能字体检查和fallback处理
         try {
           const fontCheckResults = await page.evaluate(() => {
-            const fontsToCheck = ['Inter', 'NotoColorEmoji', 'NotoSansCJKsc']
+            const fontsToCheck = ['Inter', 'NotoColorEmoji', 'Noto Color Emoji', 'NotoSansCJKsc']
             const results = {}
             
             fontsToCheck.forEach(font => {
@@ -270,18 +285,24 @@ export class MarkdownToImageService {
             this.logger.warn('❌ Inter英文字体加载失败')
           }
           
-          if (fontCheckResults.NotoColorEmoji) {
+          if (fontCheckResults.NotoColorEmoji || fontCheckResults['Noto Color Emoji']) {
             this.logger.info('✅ Emoji字体加载成功')
           } else {
-            this.logger.warn('❌ Emoji字体加载失败，将使用系统emoji字体')
+            this.logger.warn('❌ Emoji字体加载失败')
           }
           
-          // 全局字体设置 - 确保所有文字包括emoji都使用正确字体
+          if (fontCheckResults.NotoSansCJKsc) {
+            this.logger.info('✅ 中文字体加载成功')
+          } else {
+            this.logger.warn('❌ 中文字体加载失败，使用系统中文字体')
+          }
+          
+          // 全局字体设置 - Emoji字体优先
           await page.addStyleTag({
             content: `
-              /* 优化emoji字体设置 - emoji字体优先 */
+              /* 强制Emoji字体优先 */
               * {
-                font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
+                font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
               }
               
               /* 确保emoji优先使用emoji字体 */
@@ -291,20 +312,14 @@ export class MarkdownToImageService {
             `
           })
           
-          if (fontCheckResults.NotoSansCJKsc) {
-            this.logger.info('✅ 中文字体加载成功')
-          } else {
-            this.logger.warn('❌ 中文字体加载失败，使用系统中文字体')
-          }
-          
         } catch (e) {
           this.logger.warn('字体检查失败，启用完整fallback策略')
           
-          // 出错时的完整fallback策略 - emoji字体优先
+          // 出错时的完整fallback策略 - Emoji字体优先
           await page.addStyleTag({
             content: `
               * {
-                font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei' !important;
+                font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei' !important;
               }
               body, .markdown-body, .markdown-body * {
                 font-variant-emoji: emoji !important;
@@ -430,6 +445,8 @@ export class MarkdownToImageService {
       throw error
     }
   }
+
+
 
   /**
    * 简单的markdown到HTML转换
