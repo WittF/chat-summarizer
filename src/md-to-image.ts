@@ -38,12 +38,31 @@ export class MarkdownToImageService {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Twemoji Mozilla', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            letter-spacing: normal;
+            font-variant-numeric: tabular-nums;
           }
           body {
             background-color: #f6f8fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Twemoji Mozilla', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             margin: 20px;
+            letter-spacing: normal;
+          }
+          /* 专门为数字和标点符号优化字体 */
+          .markdown-body,
+          .markdown-body p,
+          .markdown-body h1,
+          .markdown-body h2,
+          .markdown-body h3,
+          .markdown-body h4,
+          .markdown-body h5,
+          .markdown-body h6 {
+            font-variant-numeric: tabular-nums;
+            letter-spacing: normal;
+          }
+          /* Emoji单独处理 */
+          .emoji {
+            font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Twemoji Mozilla', sans-serif;
           }
           h1 {
             color: #1f2328;
@@ -74,6 +93,7 @@ export class MarkdownToImageService {
             font-weight: bold;
             text-align: center;
             margin-bottom: 30px;
+            letter-spacing: normal;
           }
         </style>
       </head>
@@ -140,7 +160,7 @@ export class MarkdownToImageService {
    * 简单的markdown到HTML转换
    */
   private markdownToHtml(markdown: string): string {
-    return markdown
+    const result = markdown
       // 标题 (按级数从高到低处理，避免冲突)
       .replace(/^#### (.*$)/gm, '<h4>$1</h4>')
       .replace(/^### (.*$)/gm, '<h3>$1</h3>')
@@ -182,5 +202,8 @@ export class MarkdownToImageService {
       // 清理空段落
       .replace(/<p><\/p>/g, '')
       .replace(/<p>(<[^>]+>)<\/p>/g, '$1')
+
+    // 处理emoji字符，为它们添加特殊的class
+    return result.replace(/([\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|🤖)/gu, '<span class="emoji">$1</span>')
   }
 } 
