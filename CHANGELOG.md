@@ -1,3 +1,9 @@
+## [1.8.1](https://github.com/WittF/chat-summarizer/compare/v1.8.0...v1.8.1) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 移除截图质量设置，优化图片生成性能 ([d18d466](https://github.com/WittF/chat-summarizer/commit/d18d4664573c433a1b020105707714fbb9b5bb09))
+
 ## [1.8.0](https://github.com/WittF/chat-summarizer/compare/v1.7.0...v1.8.0) (2025-07-06)
 
 ### ✨ 功能更新
