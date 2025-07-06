@@ -87,7 +87,13 @@ export class CommandHandler {
       })
 
       if (chatRecords.length === 0) {
-        await this.sendMessage(session, [h.text('未找到被回复消息的记录')])
+        const retentionHours = this.config.chatLog.dbRetentionHours
+        await this.sendMessage(session, [h.text(
+          `❌ 未找到被回复消息的记录\n\n` +
+          `💡 说明：数据库仅保留最近 ${retentionHours} 小时的消息记录作为缓存。\n` +
+          `如果被回复的消息超过 ${retentionHours} 小时，记录可能已被自动清理。\n\n` +
+          `建议：请回复最近 ${retentionHours} 小时内包含图片或文件的消息。`
+        )])
         return
       }
 
@@ -133,7 +139,14 @@ export class CommandHandler {
       }
 
       if (!hasContent) {
-        await this.sendMessage(session, [h.text('被回复的消息中没有找到已上传的图片或文件')])
+        await this.sendMessage(session, [h.text(
+          `❌ 被回复的消息中没有找到已上传的图片或文件\n\n` +
+          `💡 可能原因：\n` +
+          `• 该消息不包含图片或文件\n` +
+          `• 图片/文件尚未上传到S3\n` +
+          `• 上传过程中出现错误\n\n` +
+          `说明：只能查询已成功上传到S3的图片和文件链接。`
+        )])
         return
       }
 
@@ -158,6 +171,7 @@ export class CommandHandler {
     statusText += `• S3存储: ${this.config.s3.enabled ? '✅ 已启用' : '❌ 已禁用'}\n`
     statusText += `• 图片上传: ✅ 已启用\n`
     statusText += `• 调试模式: ${this.config.debug ? '✅ 已启用' : '❌ 已禁用'}\n`
+    statusText += `• 数据库缓存: ${this.config.chatLog.dbRetentionHours} 小时\n`
     
     // S3配置详情
     if (this.config.s3.enabled) {
