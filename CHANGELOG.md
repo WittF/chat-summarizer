@@ -1,3 +1,9 @@
+## [1.13.1](https://github.com/WittF/chat-summarizer/compare/v1.13.0...v1.13.1) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 优化emoji加载失败处理逻辑，添加fallback机制以替换未加载成功的emoji为文本 ([3d1bd69](https://github.com/WittF/chat-summarizer/commit/3d1bd69bea4edebfc82fc463753c127cc10210d1))
+
 ## [1.13.0](https://github.com/WittF/chat-summarizer/compare/v1.12.0...v1.13.0) (2025-07-06)
 
 ### ✨ 功能更新
