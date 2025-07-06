@@ -383,11 +383,18 @@ export class CommandHandler {
                 if (imgTempMessage && imgTempMessage[0]) {
                   await session.bot.deleteMessage(session.channelId, imgTempMessage[0])
                 }
-                responseMessage += '\n\n❌ 图片生成失败: ' + (error?.message || '未知错误')
-                responseMessage += '\n\n🤖 AI总结:\n' + summary
+                
+                // 图片生成失败，使用合并转发发送
+                const errorMessage = responseMessage + '\n\n❌ 图片生成失败: ' + (error?.message || '未知错误')
+                await this.sendSummaryAsForward(session, errorMessage, summary)
+                // 清空responseMessage，避免重复发送
+                responseMessage = ''
               }
-            } else {
-            responseMessage += '\n\n🤖 AI总结:\n' + summary
+                        } else {
+              // 使用合并转发发送AI总结
+              await this.sendSummaryAsForward(session, responseMessage, summary)
+              // 清空responseMessage，避免重复发送
+              responseMessage = ''
             }
             
             // 删除AI总结临时消息
@@ -409,8 +416,10 @@ export class CommandHandler {
         await session.bot.deleteMessage(session.channelId, tempMessage[0])
       }
 
-      // 发送最终结果
-      await this.sendMessage(session, [h.text(responseMessage)])
+      // 发送最终结果（如果没有使用合并转发）
+      if (responseMessage.trim()) {
+        await this.sendMessage(session, [h.text(responseMessage)])
+      }
 
     } catch (error: any) {
       console.error('处理导出命令失败:', error)
@@ -436,5 +445,28 @@ export class CommandHandler {
   private extractMessageCount(message: string): number {
     const match = message.match(/📊 消息数量: (\d+) 条/)
     return match ? parseInt(match[1]) : 0
+  }
+
+  // 使用合并转发发送AI总结
+  private async sendSummaryAsForward(session: Session, exportMessage: string, summary: string): Promise<void> {
+    try {
+      // 构建合并转发消息
+      const forwardMessages = [
+        h('message', {}, [h.text('✅ 导出成功！')]),
+        h('message', {}, [h.text(exportMessage)]),
+        h('message', {}, [h.text('🤖 AI总结'), h.text('\n\n' + summary)])
+      ]
+
+      // 创建合并转发消息
+      const forwardContent = h('message', { forward: true }, forwardMessages)
+
+      // 发送合并转发消息
+      await session.send(forwardContent)
+      
+    } catch (error: any) {
+      // 如果合并转发失败，回退到普通发送
+      const fullMessage = exportMessage + '\n\n🤖 AI总结:\n' + summary
+      await this.sendMessage(session, [h.text(fullMessage)])
+    }
   }
 } 
