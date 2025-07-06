@@ -1,3 +1,9 @@
+## [1.9.5](https://github.com/WittF/chat-summarizer/compare/v1.9.4...v1.9.5) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 优化emoji字体加载逻辑，增加mdtest指令用于验证 ([6b0fc15](https://github.com/WittF/chat-summarizer/commit/6b0fc15a9d494d61aca5ca8c1b03304c0a7b271b))
+
 ## [1.9.4](https://github.com/WittF/chat-summarizer/compare/v1.9.3...v1.9.4) (2025-07-06)
 
 ### 🐛 Bug修复
