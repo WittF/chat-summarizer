@@ -105,7 +105,7 @@ export class CommandHandler {
         messageId: quotedMessageId
       })
 
-      let responseContent = '�� S3链接信息:\n\n'
+      let responseContent = '📋 S3链接信息:\n\n'
       let hasContent = false
 
       // 处理图片链接
