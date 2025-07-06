@@ -1,3 +1,9 @@
+## [1.9.7](https://github.com/WittF/chat-summarizer/compare/v1.9.6...v1.9.7) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 更新emoji字体样式，移除unicode-range限制并优化渲染测试逻辑 ([b695d67](https://github.com/WittF/chat-summarizer/commit/b695d676951d7e3f473d862828c56d3470d7be85))
+
 ## [1.9.6](https://github.com/WittF/chat-summarizer/compare/v1.9.5...v1.9.6) (2025-07-06)
 
 ### 🐛 Bug修复
