@@ -150,7 +150,6 @@ export class MarkdownToImageService {
         
         const screenshot = await page.screenshot({
           type: 'png',
-          quality: 100,  // 最高质量
           optimizeForSpeed: false,  // 优化质量而非速度
           clip: {
             x: Math.max(0, boundingBox.x - 20),
