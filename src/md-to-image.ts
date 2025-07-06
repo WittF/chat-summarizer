@@ -382,24 +382,6 @@ export class MarkdownToImageService {
               
               if (loadedCount >= totalImages) {
                 console.log('✅ 所有emoji图片加载完成')
-                
-                // 处理加载失败的emoji图片，替换为文本
-                const failedImages = document.querySelectorAll('img.emoji[src=""]') as NodeListOf<HTMLImageElement>
-                failedImages.forEach((img) => {
-                  const emojiData = img.getAttribute('data-emoji')
-                  if (emojiData) {
-                    try {
-                      const originalEmoji = decodeURIComponent(emojiData)
-                      const span = document.createElement('span')
-                      span.className = 'emoji-text'
-                      span.textContent = originalEmoji
-                      img.parentNode?.replaceChild(span, img)
-                    } catch (e) {
-                      console.log('⚠️ 解码emoji失败:', emojiData)
-                    }
-                  }
-                })
-                
                 resolve(undefined)
               }
             }
@@ -407,22 +389,24 @@ export class MarkdownToImageService {
             emojiImages.forEach((img) => {
               const image = img as HTMLImageElement
               if (image.complete) {
-                // 检查图片是否实际加载成功
-                if (image.naturalWidth === 0) {
-                  console.log(`⚠️ emoji图片加载失败: ${image.src}`)
-                  // 标记为失败，稍后处理
-                  image.src = ''
-                }
                 checkAllLoaded()
               } else {
-                image.onload = () => {
-                  console.log(`✅ emoji图片加载成功: ${image.src}`)
-                  checkAllLoaded()
-                }
+                image.onload = checkAllLoaded
                 image.onerror = () => {
                   console.log(`⚠️ emoji图片加载失败: ${image.src}`)
-                  // 标记为失败，稍后处理
-                  image.src = ''
+                  // 简单的fallback处理：用data-emoji属性中的原始emoji替换
+                  const emojiData = image.getAttribute('data-emoji')
+                  if (emojiData) {
+                    try {
+                      const originalEmoji = decodeURIComponent(emojiData)
+                      const span = document.createElement('span')
+                      span.className = 'emoji-text'
+                      span.textContent = originalEmoji
+                      image.parentNode?.replaceChild(span, image)
+                    } catch (e) {
+                      console.log('⚠️ 解码emoji失败:', emojiData)
+                    }
+                  }
                   checkAllLoaded()
                 }
               }
@@ -432,13 +416,6 @@ export class MarkdownToImageService {
             setTimeout(() => {
               if (loadedCount < totalImages) {
                 console.log(`⏰ emoji图片加载超时，已加载${loadedCount}/${totalImages}`)
-                // 将剩余未加载的图片标记为失败
-                emojiImages.forEach((img) => {
-                  const image = img as HTMLImageElement
-                  if (!image.complete || image.naturalWidth === 0) {
-                    image.src = ''
-                  }
-                })
               }
               resolve(undefined)
             }, 5000)
