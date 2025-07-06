@@ -25,11 +25,6 @@ export interface Config {
     excludeBots: boolean     // 是否排除机器人消息
   }
   
-  // 管理员配置
-  admin: {
-    adminIds: string[]       // 管理员QQ号列表
-  }
-  
   // 调试配置
   debug: boolean             // 调试模式
 }

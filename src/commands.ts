@@ -105,7 +105,7 @@ export class CommandHandler {
         messageId: quotedMessageId
       })
 
-      let responseContent = '📋 S3链接信息:\n\n'
+      let responseContent = ''
       let hasContent = false
 
       // 处理图片链接
@@ -114,15 +114,20 @@ export class CommandHandler {
         imageRecords.forEach((img, index) => {
           responseContent += `${index + 1}. ${img.s3Url}\n`
         })
-        responseContent += '\n'
         hasContent = true
       }
 
       // 处理文件链接
       if (fileRecords.length > 0) {
+        if (hasContent) {
+          responseContent += '\n'
+        }
         responseContent += '📁 文件链接:\n'
         fileRecords.forEach((file, index) => {
-          responseContent += `${index + 1}. ${file.fileName}\n${file.s3Url}\n\n`
+          responseContent += `${index + 1}. ${file.fileName}\n${file.s3Url}\n`
+          if (index < fileRecords.length - 1) {
+            responseContent += '\n'
+          }
         })
         hasContent = true
       }
