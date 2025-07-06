@@ -27,15 +27,19 @@ export class MarkdownToImageService {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
         <style>
           ${githubCss}
+          
+          /* 导入多种emoji字体确保兼容性 */
+          @import url('https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=Noto+Emoji&display=swap');
           
           /* 优化字体渲染质量 */
           * {
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
             text-rendering: optimizeLegibility;
+            font-feature-settings: "liga" 1, "kern" 1;
           }
           
           .markdown-body {
@@ -47,17 +51,19 @@ export class MarkdownToImageService {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Symbola', sans-serif;
             letter-spacing: normal;
             font-variant-numeric: tabular-nums;
             line-height: 1.6;
           }
+          
           body {
             background-color: #f6f8fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Symbola', sans-serif;
             margin: 20px;
             letter-spacing: normal;
           }
+          
           /* 专门为数字和标点符号优化字体 */
           .markdown-body,
           .markdown-body p,
@@ -70,10 +76,23 @@ export class MarkdownToImageService {
             font-variant-numeric: tabular-nums;
             letter-spacing: normal;
           }
-          /* Emoji单独处理 */
-          .emoji {
-            font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Twemoji Mozilla', sans-serif;
+          
+          /* 强化emoji渲染 */
+          .emoji, 
+          .ai-summary-title .emoji-char {
+            font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Symbola', sans-serif !important;
+            font-style: normal !important;
+            font-weight: normal !important;
+            font-variant: normal !important;
+            text-transform: none !important;
+            line-height: 1 !important;
+            display: inline-block;
+            vertical-align: baseline;
+            font-size: inherit;
+            -webkit-font-feature-settings: "liga" off;
+            font-feature-settings: "liga" off;
           }
+          
           h1 {
             color: #1f2328;
             border-bottom: 1px solid #d1d9e0;
@@ -99,17 +118,30 @@ export class MarkdownToImageService {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            background-clip: text;
             font-size: 28px;
             font-weight: bold;
             text-align: center;
             margin-bottom: 30px;
             letter-spacing: normal;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          }
+          
+          .ai-summary-title .emoji-char {
+            background: none !important;
+            -webkit-background-clip: initial !important;
+            -webkit-text-fill-color: initial !important;
+            background-clip: initial !important;
+            font-size: 32px;
+            margin-right: 8px;
           }
         </style>
       </head>
       <body>
         <div class="markdown-body">
-          <div class="ai-summary-title">🤖 AI 总结</div>
+          <div class="ai-summary-title">
+            <span class="emoji-char">🤖</span>AI 总结
+          </div>
           ${this.markdownToHtml(markdownContent)}
         </div>
       </body>
@@ -129,13 +161,19 @@ export class MarkdownToImageService {
         // 等待页面加载完成
         await page.waitForSelector('.markdown-body')
         
-        // 等待字体加载完成
+        // 等待所有字体加载完成
         await page.evaluate(() => {
-          return document.fonts.ready
+          return Promise.all([
+            document.fonts.ready,
+            // 强制加载emoji字体
+            document.fonts.load('16px Noto Color Emoji'),
+            document.fonts.load('16px Apple Color Emoji'),
+            document.fonts.load('16px Segoe UI Emoji')
+          ])
         })
         
-        // 额外等待确保渲染完成
-        await new Promise(resolve => setTimeout(resolve, 500))
+        // 额外等待确保emoji渲染完成
+        await new Promise(resolve => setTimeout(resolve, 1000))
         
         // 获取内容区域并截图
         const element = await page.$('.markdown-body')
@@ -222,7 +260,7 @@ export class MarkdownToImageService {
       .replace(/<p><\/p>/g, '')
       .replace(/<p>(<[^>]+>)<\/p>/g, '$1')
 
-    // 处理emoji字符，为它们添加特殊的class
-    return result.replace(/([\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|🤖)/gu, '<span class="emoji">$1</span>')
+    // 处理emoji字符，为它们添加特殊的class，扩大emoji匹配范围
+    return result.replace(/([\u{1F000}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{FE00}-\u{FE0F}]|[\u{1F900}-\u{1F9FF}]|🤖)/gu, '<span class="emoji">$1</span>')
   }
 } 
