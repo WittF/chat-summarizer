@@ -1,3 +1,9 @@
+## [1.11.0](https://github.com/WittF/chat-summarizer/compare/v1.10.0...v1.11.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **md-to-image:** 更新构建脚本以支持本地emoji和字体文件的复制 ([870f303](https://github.com/WittF/chat-summarizer/commit/870f3034724504111a8559798524c633558f3607))
+
 ## [1.10.0](https://github.com/WittF/chat-summarizer/compare/v1.9.9...v1.10.0) (2025-07-06)
 
 ### ✨ 功能更新
