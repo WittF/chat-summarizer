@@ -10,6 +10,105 @@ export class MarkdownToImageService {
   }
 
   /**
+   * 获取本地字体的base64编码
+   */
+  private getFontBase64(fontFileName: string): string {
+    try {
+      const fontPath = join(__dirname, 'assets', 'fonts', fontFileName)
+      const fontBuffer = readFileSync(fontPath)
+      return fontBuffer.toString('base64')
+    } catch (error) {
+      this.logger.warn(`无法读取字体文件 ${fontFileName}`, error)
+      // 如果缺少NotoSansCJKsc-Regular.otf，尝试使用Bold版本
+      if (fontFileName === 'NotoSansCJKsc-Regular.otf') {
+        return this.getFontBase64('NotoSansCJKsc-Bold.otf')
+      }
+      return ''
+    }
+  }
+
+  /**
+   * 生成字体CSS - 完整的中文字体fallback策略
+   */
+  private generateFontCSS(): string {
+    // 英文字体
+    const interRegular = this.getFontBase64('Inter-Regular.woff2')
+    const interBold = this.getFontBase64('Inter-Bold.woff2')
+    
+    // 中文字体 - 多层fallback
+    const notoSansCJKscRegular = this.getFontBase64('NotoSansCJKsc-Regular.otf')
+    const notoSansCJKscBold = this.getFontBase64('NotoSansCJKsc-Bold.otf')
+    const notoSansCJKtcRegular = this.getFontBase64('NotoSansCJKtc-Regular.otf')
+    const sourceHanSansRegular = this.getFontBase64('SourceHanSansSC-Regular.otf')
+    
+    // Emoji字体
+    const notoColorEmoji = this.getFontBase64('NotoColorEmoji.ttf')
+
+    return `
+      /* 主要英文字体 */
+      @font-face {
+        font-family: 'Inter';
+        src: url(data:font/woff2;base64,${interRegular}) format('woff2');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+      
+      @font-face {
+        font-family: 'Inter';
+        src: url(data:font/woff2;base64,${interBold}) format('woff2');
+        font-weight: bold;
+        font-style: normal;
+        font-display: swap;
+      }
+      
+      /* 主要中文字体 - Noto Sans CJK 简体 */
+      @font-face {
+        font-family: 'NotoSansCJKsc';
+        src: url(data:font/opentype;base64,${notoSansCJKscRegular}) format('opentype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+      
+      @font-face {
+        font-family: 'NotoSansCJKsc';
+        src: url(data:font/opentype;base64,${notoSansCJKscBold}) format('opentype');
+        font-weight: bold;
+        font-style: normal;
+        font-display: swap;
+      }
+      
+      /* 中文字体fallback 1 - Noto Sans CJK 繁体 */
+      @font-face {
+        font-family: 'NotoSansCJKtc';
+        src: url(data:font/opentype;base64,${notoSansCJKtcRegular}) format('opentype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+      
+      /* 中文字体fallback 2 - 思源黑体 */
+      @font-face {
+        font-family: 'SourceHanSansSC';
+        src: url(data:font/opentype;base64,${sourceHanSansRegular}) format('opentype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+      
+      /* Emoji字体 */
+      @font-face {
+        font-family: 'NotoColorEmoji';
+        src: url(data:font/truetype;base64,${notoColorEmoji}) format('truetype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+    `
+  }
+
+  /**
    * 将markdown内容转换为图片
    */
   async convertToImage(markdownContent: string): Promise<Buffer> {
@@ -20,6 +119,9 @@ export class MarkdownToImageService {
     const githubCssPath = require.resolve('github-markdown-css/github-markdown.css')
     const githubCss = readFileSync(githubCssPath, 'utf-8')
     
+    // 生成字体CSS
+    const fontCSS = this.generateFontCSS()
+    
     // 创建HTML模板
     const html = `
       <!DOCTYPE html>
@@ -28,18 +130,14 @@ export class MarkdownToImageService {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
+          ${fontCSS}
           ${githubCss}
           
-          /* 导入多种emoji字体确保兼容性 */
-          @import url('https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap');
-          @import url('https://fonts.googleapis.com/css2?family=Noto+Emoji&display=swap');
-          
-          /* 优化字体渲染质量 */
-          * {
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            text-rendering: optimizeLegibility;
-            font-feature-settings: "liga" 1, "kern" 1;
+          /* 完整的字体fallback策略 */
+          body {
+            background-color: #f6f8fa;
+            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
+            margin: 20px;
           }
           
           .markdown-body {
@@ -51,97 +149,77 @@ export class MarkdownToImageService {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Symbola', sans-serif;
-            letter-spacing: normal;
-            font-variant-numeric: tabular-nums;
+            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
             line-height: 1.6;
           }
           
-          body {
-            background-color: #f6f8fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Symbola', sans-serif;
-            margin: 20px;
-            letter-spacing: normal;
+          /* 中文文本专用样式 */
+          .markdown-body p, .markdown-body li, .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
           }
           
-          /* 专门为数字和标点符号优化字体 */
-          .markdown-body,
-          .markdown-body p,
-          .markdown-body h1,
-          .markdown-body h2,
-          .markdown-body h3,
-          .markdown-body h4,
-          .markdown-body h5,
-          .markdown-body h6 {
-            font-variant-numeric: tabular-nums;
-            letter-spacing: normal;
+          /* 代码块使用等宽字体，包含中文支持 */
+          .markdown-body pre, .markdown-body code {
+            font-family: 'Consolas', 'Monaco', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', monospace;
           }
           
-          /* 强化emoji渲染 */
-          .emoji, 
-          .ai-summary-title .emoji-char {
-            font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Symbola', sans-serif !important;
-            font-style: normal !important;
-            font-weight: normal !important;
-            font-variant: normal !important;
-            text-transform: none !important;
-            line-height: 1 !important;
-            display: inline-block;
-            vertical-align: baseline;
-            font-size: inherit;
-            -webkit-font-feature-settings: "liga" off;
-            font-feature-settings: "liga" off;
+          /* emoji专用字体配置 */
+          .emoji,
+          .ai-summary-title {
+            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji', 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', sans-serif;
           }
           
           h1 {
             color: #1f2328;
             border-bottom: 1px solid #d1d9e0;
             padding-bottom: 10px;
+            font-weight: bold;
           }
           h2 {
             color: #1f2328;
             border-bottom: 1px solid #d1d9e0;
             padding-bottom: 8px;
+            font-weight: bold;
           }
           h3 {
             color: #1f2328;
             margin-top: 24px;
             margin-bottom: 16px;
+            font-weight: bold;
           }
           h4 {
             color: #1f2328;
             margin-top: 20px;
             margin-bottom: 12px;
             font-size: 1.1em;
+            font-weight: bold;
           }
+          
+          /* 粗体文本确保使用粗体字体 */
+          .markdown-body strong, .markdown-body b {
+            font-weight: bold;
+            font-family: 'Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'PingFang SC', 'Microsoft YaHei', 'SimHei', sans-serif;
+          }
+          
           .ai-summary-title {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
             font-size: 28px;
             font-weight: bold;
             text-align: center;
             margin-bottom: 30px;
-            letter-spacing: normal;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: #667eea;
           }
           
-          .ai-summary-title .emoji-char {
-            background: none !important;
-            -webkit-background-clip: initial !important;
-            -webkit-text-fill-color: initial !important;
-            background-clip: initial !important;
-            font-size: 32px;
-            margin-right: 8px;
+          /* 确保中文标点符号正确显示 */
+          .markdown-body {
+            text-rendering: optimizeLegibility;
+            -webkit-font-feature-settings: "liga", "kern";
+            font-feature-settings: "liga", "kern";
           }
         </style>
       </head>
       <body>
         <div class="markdown-body">
-          <div class="ai-summary-title">
-            <span class="emoji-char">🤖</span>AI 总结
-          </div>
+          <div class="ai-summary-title">🤖 AI 总结</div>
           ${this.markdownToHtml(markdownContent)}
         </div>
       </body>
@@ -151,29 +229,31 @@ export class MarkdownToImageService {
     try {
       // 使用Koishi的puppeteer服务渲染页面
       const imageBuffer = await puppeteer.render(html, async (page, next) => {
-        // 设置更高分辨率的视口，启用高DPI支持
+        // 设置视口
         await page.setViewport({ 
           width: 1200, 
           height: 1000,
-          deviceScaleFactor: 2  // 2倍像素密度，提升清晰度
+          deviceScaleFactor: 2
         })
         
-        // 等待页面加载完成
+        // 等待页面和字体加载完成
         await page.waitForSelector('.markdown-body')
         
         // 等待所有字体加载完成
-        await page.evaluate(() => {
-          return Promise.all([
-            document.fonts.ready,
-            // 强制加载emoji字体
-            document.fonts.load('16px Noto Color Emoji'),
-            document.fonts.load('16px Apple Color Emoji'),
-            document.fonts.load('16px Segoe UI Emoji')
-          ])
-        })
+        try {
+          await page.waitForFunction(
+            () => {
+              const fonts = ['Inter', 'NotoSansCJKsc', 'NotoColorEmoji']
+              return fonts.every(font => document.fonts.check(`16px "${font}"`))
+            },
+            { timeout: 8000 }
+          )
+          this.logger.info('所有字体加载完成')
+        } catch (e) {
+          this.logger.warn('部分字体加载超时，使用fallback字体继续渲染')
+        }
         
-        // 额外等待确保emoji渲染完成
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise(resolve => setTimeout(resolve, 800))
         
         // 获取内容区域并截图
         const element = await page.$('.markdown-body')
@@ -188,7 +268,7 @@ export class MarkdownToImageService {
         
         const screenshot = await page.screenshot({
           type: 'png',
-          optimizeForSpeed: false,  // 优化质量而非速度
+          optimizeForSpeed: false,
           clip: {
             x: Math.max(0, boundingBox.x - 20),
             y: Math.max(0, boundingBox.y - 20),
@@ -218,7 +298,7 @@ export class MarkdownToImageService {
    */
   private markdownToHtml(markdown: string): string {
     const result = markdown
-      // 标题 (按级数从高到低处理，避免冲突)
+      // 标题
       .replace(/^#### (.*$)/gm, '<h4>$1</h4>')
       .replace(/^### (.*$)/gm, '<h3>$1</h3>')
       .replace(/^## (.*$)/gm, '<h2>$1</h2>')
@@ -260,7 +340,7 @@ export class MarkdownToImageService {
       .replace(/<p><\/p>/g, '')
       .replace(/<p>(<[^>]+>)<\/p>/g, '$1')
 
-    // 处理emoji字符，为它们添加特殊的class，扩大emoji匹配范围
-    return result.replace(/([\u{1F000}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{FE00}-\u{FE0F}]|[\u{1F900}-\u{1F9FF}]|🤖)/gu, '<span class="emoji">$1</span>')
+    // 为emoji添加特殊class
+    return result.replace(/([\u{1F000}-\u{1F9FF}]|[\u{2600}-\u{27BF}]|🤖)/gu, '<span class="emoji">$1</span>')
   }
 } 

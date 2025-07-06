@@ -14,7 +14,7 @@
     "chat"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --outfile=lib/index.js --format=cjs --platform=node --external:koishi --external:@aws-sdk/client-s3 --external:@aws-sdk/lib-storage --external:axios --external:github-markdown-css && tsc --emitDeclarationOnly",
+    "build": "esbuild src/index.ts --bundle --outfile=lib/index.js --format=cjs --platform=node --external:koishi --external:@aws-sdk/client-s3 --external:@aws-sdk/lib-storage --external:axios --external:github-markdown-css && tsc --emitDeclarationOnly && node -e \"const fs=require('fs'),path=require('path');fs.mkdirSync('lib/assets/fonts',{recursive:true});try{fs.readdirSync('src/assets/fonts').forEach(f=>fs.copyFileSync(path.join('src/assets/fonts',f),path.join('lib/assets/fonts',f)));console.log('Fonts copied successfully');}catch(e){console.warn('Font copy failed:',e.message);}\"",
     "clean": "rimraf lib",
     "prepublishOnly": "npm run clean && npm run build",
     "semantic-release": "semantic-release"
