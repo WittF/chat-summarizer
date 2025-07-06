@@ -4,9 +4,45 @@ import { join } from 'path'
 
 export class MarkdownToImageService {
   private logger: Logger
+  private isRendering: boolean = false
+  private renderQueue: Array<() => Promise<void>> = []
+  private fontCache: Map<string, boolean> = new Map()
 
   constructor(private ctx: Context) {
     this.logger = ctx.logger('chat-summarizer:md-to-image')
+  }
+
+  /**
+   * 检查是否正在渲染，避免并发渲染
+   */
+  private async waitForRenderSlot(): Promise<void> {
+    if (!this.isRendering) {
+      this.isRendering = true
+      return
+    }
+
+    // 如果正在渲染，加入队列等待
+    this.logger.info('渲染进程繁忙，加入等待队列...')
+    return new Promise((resolve) => {
+      this.renderQueue.push(async () => {
+        this.isRendering = true
+        resolve()
+      })
+    })
+  }
+
+  /**
+   * 释放渲染槽位
+   */
+  private releaseRenderSlot(): void {
+    this.isRendering = false
+    
+    // 处理队列中的下一个任务
+    const nextTask = this.renderQueue.shift()
+    if (nextTask) {
+      this.logger.info('处理队列中的下一个渲染任务')
+      nextTask()
+    }
   }
 
   /**
@@ -135,6 +171,13 @@ export class MarkdownToImageService {
    * 将markdown内容转换为图片
    */
   async convertToImage(markdownContent: string): Promise<Buffer> {
+    const startTime = Date.now()
+    
+    // 等待渲染槽位，避免并发渲染影响性能
+    await this.waitForRenderSlot()
+    
+    this.logger.info('开始图片渲染，队列等待时间:', Date.now() - startTime, 'ms')
+    
     // 获取puppeteer服务
     const puppeteer = (this.ctx as any).puppeteer
     
@@ -263,73 +306,110 @@ export class MarkdownToImageService {
         // 等待页面加载完成
         await page.waitForSelector('.markdown-body')
         
-        // 智能字体检查和fallback处理
-        try {
-          const fontCheckResults = await page.evaluate(() => {
-            const fontsToCheck = ['Inter', 'NotoColorEmoji', 'Noto Color Emoji', 'NotoSansCJKsc']
-            const results = {}
-            
-            fontsToCheck.forEach(font => {
-              results[font] = document.fonts.check(`16px "${font}"`)
-            })
-            
-            return results
-          })
-          
-          this.logger.info('字体加载检查结果:', fontCheckResults)
-          
-          // 检查关键字体
-          if (fontCheckResults.Inter) {
-            this.logger.info('✅ Inter英文字体加载成功')
-          } else {
-            this.logger.warn('❌ Inter英文字体加载失败')
-          }
-          
-          if (fontCheckResults.NotoColorEmoji || fontCheckResults['Noto Color Emoji']) {
-            this.logger.info('✅ Emoji字体加载成功')
-          } else {
-            this.logger.warn('❌ Emoji字体加载失败')
-          }
-          
-          if (fontCheckResults.NotoSansCJKsc) {
-            this.logger.info('✅ 中文字体加载成功')
-          } else {
-            this.logger.warn('❌ 中文字体加载失败，使用系统中文字体')
-          }
-          
-          // 全局字体设置 - Emoji字体优先
-          await page.addStyleTag({
-            content: `
-              /* 强制Emoji字体优先 */
-              * {
-                font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
-              }
-              
-              /* 确保emoji优先使用emoji字体 */
-              body, .markdown-body, .markdown-body * {
-                font-variant-emoji: emoji !important;
-              }
-            `
-          })
-          
-        } catch (e) {
-          this.logger.warn('字体检查失败，启用完整fallback策略')
-          
-          // 出错时的完整fallback策略 - Emoji字体优先
-          await page.addStyleTag({
-            content: `
-              * {
-                font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei' !important;
-              }
-              body, .markdown-body, .markdown-body * {
-                font-variant-emoji: emoji !important;
-              }
-            `
-          })
-        }
+        // 动态加载字体并等待完成
+        this.logger.info('开始动态加载字体...')
         
-        // 额外等待确保字体加载完成
-        await new Promise(resolve => setTimeout(resolve, 1200))
+        await page.evaluate((useGoogleFonts) => {
+          // 设置初始状态
+          (window as any).puppeteerReadyState = 'loading';
+          
+          // 收集需要加载的字体
+          const fontsToLoad = [];
+          
+          // 检查本地NotoColorEmoji字体
+          const localEmojiFont = document.querySelector('style')?.textContent?.includes('NotoColorEmoji');
+          if (localEmojiFont) {
+            fontsToLoad.push({ name: 'NotoColorEmoji', isLocal: true });
+          }
+          
+          // 如果使用Google Fonts
+          if (useGoogleFonts) {
+            fontsToLoad.push({ name: 'Noto Color Emoji', isLocal: false });
+          }
+          
+          // 添加其他字体
+          fontsToLoad.push({ name: 'Inter', isLocal: true });
+          fontsToLoad.push({ name: 'NotoSansCJKsc', isLocal: true });
+          
+          console.log('准备加载字体:', fontsToLoad.map(f => f.name));
+          
+          // 字体加载完成计数器
+          let loadedCount = 0;
+          const totalFonts = fontsToLoad.length;
+          
+          const checkAllFontsLoaded = () => {
+            loadedCount++;
+            console.log(`字体加载进度: ${loadedCount}/${totalFonts}`);
+            
+            if (loadedCount >= totalFonts) {
+              console.log('✅ 所有字体加载完成');
+              (window as any).puppeteerReadyState = 'complete';
+            }
+          };
+          
+          // 为每个字体设置加载检查
+          fontsToLoad.forEach((fontInfo, index) => {
+            setTimeout(() => {
+              // 检查字体是否可用
+              const isAvailable = document.fonts.check(`16px "${fontInfo.name}"`);
+              
+              if (isAvailable) {
+                console.log(`✅ 字体 ${fontInfo.name} 已可用`);
+                checkAllFontsLoaded();
+              } else {
+                console.log(`⏳ 等待字体 ${fontInfo.name} 加载...`);
+                
+                // 使用字体加载事件监听
+                document.fonts.ready.then(() => {
+                  const isNowAvailable = document.fonts.check(`16px "${fontInfo.name}"`);
+                  if (isNowAvailable) {
+                    console.log(`✅ 字体 ${fontInfo.name} 延迟加载成功`);
+                  } else {
+                    console.log(`⚠️ 字体 ${fontInfo.name} 仍未可用，使用fallback`);
+                  }
+                  checkAllFontsLoaded();
+                });
+              }
+            }, index * 100); // 错开检查时间避免同时检查
+          });
+          
+          // 设置最大等待时间（5秒超时）
+          setTimeout(() => {
+            if ((window as any).puppeteerReadyState !== 'complete') {
+              console.log('⏰ 字体加载超时，强制继续');
+              (window as any).puppeteerReadyState = 'complete';
+            }
+          }, 5000);
+          
+        }, fontConfig.useGoogleFonts);
+        
+        // 等待字体加载完成的标志位
+        this.logger.info('等待字体加载完成...')
+        await page.waitForFunction(() => (window as any).puppeteerReadyState === 'complete', {
+          timeout: 6000
+        }).catch(() => {
+          this.logger.warn('等待字体加载超时，继续执行')
+        });
+        
+        this.logger.info('字体加载完成，开始最终字体设置')
+        
+        // 最终字体设置 - 确保优先级
+        await page.addStyleTag({
+          content: `
+            /* 最终强制Emoji字体优先 */
+            * {
+              font-family: 'NotoColorEmoji', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Inter', 'NotoSansCJKsc', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
+            }
+            
+            /* 确保emoji优先使用emoji字体 */
+            body, .markdown-body, .markdown-body * {
+              font-variant-emoji: emoji !important;
+            }
+          `
+        })
+        
+        // 额外等待确保渲染完成
+        await new Promise(resolve => setTimeout(resolve, 500))
         
         // 测试emoji渲染情况 - 在实际渲染上下文中测试
         try {
@@ -433,9 +513,11 @@ export class MarkdownToImageService {
         return screenshot
       })
       
+      const totalTime = Date.now() - startTime
       this.logger.info('Markdown转图片成功', {
         contentLength: markdownContent.length,
-        imageSize: imageBuffer.length
+        imageSize: imageBuffer.length,
+        renderTime: totalTime + 'ms'
       })
       
       return Buffer.from(imageBuffer, 'base64')
@@ -443,6 +525,9 @@ export class MarkdownToImageService {
     } catch (error) {
       this.logger.error('Markdown转图片失败', error)
       throw error
+    } finally {
+      // 释放渲染槽位，允许其他渲染任务继续
+      this.releaseRenderSlot()
     }
   }
 
