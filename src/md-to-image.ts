@@ -14,16 +14,38 @@ export class MarkdownToImageService {
    */
   private getFontBase64(fontFileName: string): string {
     try {
-      const fontPath = join(__dirname, 'assets', 'fonts', fontFileName)
+      // 使用更可靠的路径解析方式
+      const fontPath = join(process.cwd(), 'node_modules', 'chat-summarizer', 'lib', 'assets', 'fonts', fontFileName)
+      this.logger.debug(`尝试读取字体文件: ${fontPath}`)
+      
       const fontBuffer = readFileSync(fontPath)
-      return fontBuffer.toString('base64')
+      const base64Data = fontBuffer.toString('base64')
+      
+      this.logger.debug(`字体文件 ${fontFileName} 读取成功，大小: ${fontBuffer.length} bytes`)
+      return base64Data
     } catch (error) {
       this.logger.warn(`无法读取字体文件 ${fontFileName}`, error)
-      // 如果缺少NotoSansCJKsc-Regular.otf，尝试使用Bold版本
-      if (fontFileName === 'NotoSansCJKsc-Regular.otf') {
-        return this.getFontBase64('NotoSansCJKsc-Bold.otf')
+      
+      // 尝试备用路径
+      try {
+        const altFontPath = join(__dirname, 'assets', 'fonts', fontFileName)
+        this.logger.debug(`尝试备用路径: ${altFontPath}`)
+        
+        const fontBuffer = readFileSync(altFontPath)
+        const base64Data = fontBuffer.toString('base64')
+        
+        this.logger.debug(`字体文件 ${fontFileName} 从备用路径读取成功，大小: ${fontBuffer.length} bytes`)
+        return base64Data
+      } catch (altError) {
+        this.logger.warn(`备用路径也无法读取字体文件 ${fontFileName}`, altError)
+        
+        // 如果缺少NotoSansCJKsc-Regular.otf，尝试使用Bold版本
+        if (fontFileName === 'NotoSansCJKsc-Regular.otf') {
+          this.logger.info('尝试使用NotoSansCJKsc-Bold.otf作为fallback')
+          return this.getFontBase64('NotoSansCJKsc-Bold.otf')
+        }
+        return ''
       }
-      return ''
     }
   }
 
@@ -44,7 +66,21 @@ export class MarkdownToImageService {
     // Emoji字体
     const notoColorEmoji = this.getFontBase64('NotoColorEmoji.ttf')
 
+    // 检查字体数据是否成功读取
+    const fontStatus = {
+      interRegular: interRegular.length > 0,
+      interBold: interBold.length > 0,
+      notoSansCJKscRegular: notoSansCJKscRegular.length > 0,
+      notoSansCJKscBold: notoSansCJKscBold.length > 0,
+      notoSansCJKtcRegular: notoSansCJKtcRegular.length > 0,
+      sourceHanSansRegular: sourceHanSansRegular.length > 0,
+      notoColorEmoji: notoColorEmoji.length > 0
+    }
+    
+    this.logger.info('字体文件读取状态:', fontStatus)
+
     return `
+      ${interRegular ? `
       /* 主要英文字体 */
       @font-face {
         font-family: 'Inter';
@@ -52,16 +88,18 @@ export class MarkdownToImageService {
         font-weight: normal;
         font-style: normal;
         font-display: block;
-      }
+      }` : ''}
       
+      ${interBold ? `
       @font-face {
         font-family: 'Inter';
         src: url(data:font/woff2;base64,${interBold}) format('woff2');
         font-weight: bold;
         font-style: normal;
         font-display: block;
-      }
+      }` : ''}
       
+      ${notoSansCJKscRegular ? `
       /* 主要中文字体 - Noto Sans CJK 简体 */
       @font-face {
         font-family: 'NotoSansCJKsc';
@@ -69,16 +107,18 @@ export class MarkdownToImageService {
         font-weight: normal;
         font-style: normal;
         font-display: block;
-      }
+      }` : ''}
       
+      ${notoSansCJKscBold ? `
       @font-face {
         font-family: 'NotoSansCJKsc';
         src: url(data:font/opentype;base64,${notoSansCJKscBold}) format('opentype');
         font-weight: bold;
         font-style: normal;
         font-display: block;
-      }
+      }` : ''}
       
+      ${notoSansCJKtcRegular ? `
       /* 中文字体fallback 1 - Noto Sans CJK 繁体 */
       @font-face {
         font-family: 'NotoSansCJKtc';
@@ -86,8 +126,9 @@ export class MarkdownToImageService {
         font-weight: normal;
         font-style: normal;
         font-display: block;
-      }
+      }` : ''}
       
+      ${sourceHanSansRegular ? `
       /* 中文字体fallback 2 - 思源黑体 */
       @font-face {
         font-family: 'SourceHanSansSC';
@@ -95,8 +136,9 @@ export class MarkdownToImageService {
         font-weight: normal;
         font-style: normal;
         font-display: block;
-      }
+      }` : ''}
       
+      ${notoColorEmoji ? `
       /* Emoji字体 */
       @font-face {
         font-family: 'NotoColorEmoji';
@@ -104,7 +146,7 @@ export class MarkdownToImageService {
         font-weight: normal;
         font-style: normal;
         font-display: block;
-      }
+      }` : ''}
     `
   }
 
@@ -241,31 +283,32 @@ export class MarkdownToImageService {
         
         // 等待所有字体加载完成
         try {
-          await page.waitForFunction(
-            () => {
-              const fonts = ['Inter', 'NotoSansCJKsc', 'NotoColorEmoji']
-              return fonts.every(font => document.fonts.check(`16px "${font}"`))
-            },
-            { timeout: 15000 }
-          )
-          this.logger.info('所有字体加载完成')
-        } catch (e) {
-          this.logger.warn('部分字体加载超时，使用fallback字体继续渲染')
+          // 动态获取所有成功加载的字体
+          const availableFonts = await page.evaluate(() => {
+            const allFonts = ['Inter', 'NotoSansCJKsc', 'NotoSansCJKtc', 'SourceHanSansSC', 'NotoColorEmoji']
+            return allFonts.filter(font => document.fonts.check(`16px "${font}"`))
+          })
           
-          // 检查各个字体的加载状态
+          this.logger.info('成功加载的字体:', availableFonts)
+          
+          // 检查关键字体是否加载
+          const criticalFonts = ['Inter', 'NotoSansCJKsc', 'NotoColorEmoji']
+          const missingFonts = criticalFonts.filter(font => !availableFonts.includes(font))
+          
+          if (missingFonts.length > 0) {
+            this.logger.warn(`关键字体加载失败: ${missingFonts.join(', ')}`)
+          } else {
+            this.logger.info('所有关键字体加载完成')
+          }
+          
+        } catch (e) {
+          this.logger.warn('字体加载检查失败，使用fallback字体继续渲染')
+          
+          // 特别检查emoji字体加载状态
           try {
-            const fontStatus = await page.evaluate(() => {
-              const fonts = ['Inter', 'NotoSansCJKsc', 'NotoColorEmoji']
-              return fonts.map(font => ({
-                name: font,
-                loaded: document.fonts.check(`16px "${font}"`)
-              }))
+            const emojiFontLoaded = await page.evaluate(() => {
+              return document.fonts.check('16px "NotoColorEmoji"')
             })
-            
-            this.logger.info('字体加载状态:', fontStatus)
-            
-            // 特别检查emoji字体加载状态
-            const emojiFontLoaded = fontStatus.find(f => f.name === 'NotoColorEmoji')?.loaded
             
             if (!emojiFontLoaded) {
               this.logger.warn('Emoji字体加载失败，尝试使用系统emoji字体')
@@ -275,11 +318,49 @@ export class MarkdownToImageService {
                   .emoji, .ai-summary-title {
                     font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
                   }
+                  
+                  /* 确保emoji字符使用正确的字体 */
+                  .emoji {
+                    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
+                    font-size: 1.1em;
+                    line-height: 1;
+                  }
+                  
+                  /* 标题中的emoji特殊处理 */
+                  .ai-summary-title {
+                    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
+                    font-size: 28px;
+                  }
                 `
               })
               
               // 给系统字体一些加载时间
               await new Promise(resolve => setTimeout(resolve, 1000))
+              
+              // 再次检查系统emoji字体是否可用
+              try {
+                const systemEmojiAvailable = await page.evaluate(() => {
+                  // 测试系统emoji字体是否可用
+                  const testEmoji = '🤖'
+                  const canvas = document.createElement('canvas')
+                  const ctx = canvas.getContext('2d')
+                  if (!ctx) return false
+                  
+                  // 尝试使用系统emoji字体
+                  ctx.font = '16px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"'
+                  ctx.fillText(testEmoji, 0, 0)
+                  
+                  return true
+                })
+                
+                if (systemEmojiAvailable) {
+                  this.logger.info('系统emoji字体可用')
+                } else {
+                  this.logger.warn('系统emoji字体不可用，可能显示为方块')
+                }
+              } catch (testError) {
+                this.logger.warn('系统emoji字体测试失败')
+              }
             }
           } catch (emojiError) {
             this.logger.warn('Emoji字体检查失败，使用默认处理')
