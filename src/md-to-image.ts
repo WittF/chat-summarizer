@@ -37,10 +37,11 @@ export class MarkdownToImageService {
             background-color: #ffffff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
           }
           body {
             background-color: #f6f8fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
             margin: 20px;
           }
           h1 {
@@ -52,6 +53,17 @@ export class MarkdownToImageService {
             color: #1f2328;
             border-bottom: 1px solid #d1d9e0;
             padding-bottom: 8px;
+          }
+          h3 {
+            color: #1f2328;
+            margin-top: 24px;
+            margin-bottom: 16px;
+          }
+          h4 {
+            color: #1f2328;
+            margin-top: 20px;
+            margin-bottom: 12px;
+            font-size: 1.1em;
           }
           .ai-summary-title {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -123,7 +135,8 @@ export class MarkdownToImageService {
    */
   private markdownToHtml(markdown: string): string {
     return markdown
-      // 标题
+      // 标题 (按级数从高到低处理，避免冲突)
+      .replace(/^#### (.*$)/gm, '<h4>$1</h4>')
       .replace(/^### (.*$)/gm, '<h3>$1</h3>')
       .replace(/^## (.*$)/gm, '<h2>$1</h2>')
       .replace(/^# (.*$)/gm, '<h1>$1</h1>')
