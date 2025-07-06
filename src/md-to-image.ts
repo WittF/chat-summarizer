@@ -26,13 +26,22 @@ export class MarkdownToImageService {
       <html>
       <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
         <style>
           ${githubCss}
+          
+          /* 优化字体渲染质量 */
+          * {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+          }
+          
           .markdown-body {
             box-sizing: border-box;
             min-width: 200px;
-            max-width: 800px;
+            max-width: 1000px;
             margin: 0 auto;
             padding: 45px;
             background-color: #ffffff;
@@ -41,6 +50,7 @@ export class MarkdownToImageService {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             letter-spacing: normal;
             font-variant-numeric: tabular-nums;
+            line-height: 1.6;
           }
           body {
             background-color: #f6f8fa;
@@ -109,7 +119,12 @@ export class MarkdownToImageService {
     try {
       // 使用Koishi的puppeteer服务渲染页面
       const imageBuffer = await puppeteer.render(html, async (page, next) => {
-        await page.setViewport({ width: 1000, height: 800 })
+        // 设置更高分辨率的视口，启用高DPI支持
+        await page.setViewport({ 
+          width: 1200, 
+          height: 1000,
+          deviceScaleFactor: 2  // 2倍像素密度，提升清晰度
+        })
         
         // 等待页面加载完成
         await page.waitForSelector('.markdown-body')
@@ -118,6 +133,9 @@ export class MarkdownToImageService {
         await page.evaluate(() => {
           return document.fonts.ready
         })
+        
+        // 额外等待确保渲染完成
+        await page.waitForTimeout(500)
         
         // 获取内容区域并截图
         const element = await page.$('.markdown-body')
@@ -132,6 +150,8 @@ export class MarkdownToImageService {
         
         const screenshot = await page.screenshot({
           type: 'png',
+          quality: 100,  // 最高质量
+          optimizeForSpeed: false,  // 优化质量而非速度
           clip: {
             x: Math.max(0, boundingBox.x - 20),
             y: Math.max(0, boundingBox.y - 20),
