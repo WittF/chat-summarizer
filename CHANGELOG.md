@@ -1,3 +1,9 @@
+## [1.11.2](https://github.com/WittF/chat-summarizer/compare/v1.11.1...v1.11.2) (2025-07-06)
+
+### ♻️ 代码重构
+
+* **emoji:** 恢复使用CDN emoji图片替代本地文件方案 ([309f8fc](https://github.com/WittF/chat-summarizer/commit/309f8fc702a58fc8f9d334e3710d851286748f8b))
+
 ## [1.11.1](https://github.com/WittF/chat-summarizer/compare/v1.11.0...v1.11.1) (2025-07-06)
 
 ### 🐛 Bug修复
