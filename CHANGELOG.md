@@ -8,6 +8,28 @@
 
 ### 🐛 Bug修复
 
+* **release:** 修复错误的Git记录和版本号 ([aa5dade](https://github.com/WittF/chat-summarizer/commit/aa5dadec51235de2faccf3db565aea6e9f22629c))
+* **release:** 修复错误的Git记录和版本号 ([7686eb2](https://github.com/WittF/chat-summarizer/commit/7686eb2c656d572468427105b1c726e4568ef209))
+* **release:** 修复错误的Git记录和版本号 ([5b7f0ad](https://github.com/WittF/chat-summarizer/commit/5b7f0ad4e29252c79be49e558db0bc9f9b49661e))
+* 修复emoji显示乱码和####标题处理问题 ([5cfdb06](https://github.com/WittF/chat-summarizer/commit/5cfdb069dda92a5b48751e97d6279d117e57d320))
+* 修复emoji显示乱码和####标题处理问题 ([effae61](https://github.com/WittF/chat-summarizer/commit/effae6119642d0f1b016b10e3d2bf1ddf486822f))
+
+### 🔧 其他更改
+
+* **release:** 1.4.0 [skip ci] ([4c60955](https://github.com/WittF/chat-summarizer/commit/4c60955eb430c07e8b866ef43c3f7cf545d5aca6))
+* **release:** 1.4.0 [skip ci] ([b57568d](https://github.com/WittF/chat-summarizer/commit/b57568da4ec97699d64e09bb55dd72ab1dea0f50))
+* **release:** 1.4.0 [skip ci] ([90d145a](https://github.com/WittF/chat-summarizer/commit/90d145a48f16f703677dca8007350c6586d6a9cc))
+
+## [1.4.0](https://github.com/WittF/chat-summarizer/compare/v1.3.0...v1.4.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **ai:** 优化AI总结图片输出功能，使用Koishi puppeteer生成GitHub样式markdown图片 ([dee8d84](https://github.com/WittF/chat-summarizer/commit/dee8d84b9ffc37d247755540cfaf5a406db761cc))
+* **commands:** 优化图片生成失败处理，新增合并转发功能以发送AI总结 ([408fc2f](https://github.com/WittF/chat-summarizer/commit/408fc2fc9f5cc650272df05748501f8b1fddc0b3))
+* **md-to-image:** 更新Markdown转图片功能，增加h3和h4样式支持，并优化字体设置 ([6d7e8ee](https://github.com/WittF/chat-summarizer/commit/6d7e8ee08ad92eb16cf50040c4a1db535e0fc076))
+
+### 🐛 Bug修复
+
 * **release:** 修复错误的Git记录和版本号 ([7686eb2](https://github.com/WittF/chat-summarizer/commit/7686eb2c656d572468427105b1c726e4568ef209))
 * **release:** 修复错误的Git记录和版本号 ([5b7f0ad](https://github.com/WittF/chat-summarizer/commit/5b7f0ad4e29252c79be49e558db0bc9f9b49661e))
 
