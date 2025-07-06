@@ -50,3 +50,15 @@
    cs.status
    ```
 
+### 聊天记录配置
+
+```yaml
+chatLog:
+  enabled: true               # 是否启用聊天记录功能
+  includeImages: true         # 是否在聊天记录中包含图片链接
+  autoUploadTime: "02:00"     # 自动上传时间（HH:mm格式）
+  retentionDays: 3            # 本地文件保留天数
+  maxFileSize: 10             # 单个日志文件最大大小(MB)
+  dbRetentionHours: 24        # 数据库记录保留小时数（用作缓存，建议24小时）
+```
+

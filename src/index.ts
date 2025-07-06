@@ -659,9 +659,52 @@ export function apply(ctx: Context, config: Config) {
 
     uploadScheduler = setTimeout(async () => {
       await executeAutoUpload()
+      // 执行数据库清理
+      await executeDatabaseCleanup()
       // 设置下一次执行
       scheduleAutoUpload()
     }, delay)
+  }
+
+  // 执行数据库清理
+  const executeDatabaseCleanup = async (): Promise<void> => {
+    try {
+      if (config.debug) {
+        logger.info('开始执行数据库清理')
+      }
+
+      const result = await dbOps.cleanupExpiredRecords(config.chatLog.dbRetentionHours)
+      
+      const totalDeleted = result.deletedChatRecords + result.deletedImageRecords + result.deletedFileRecords
+      
+      if (totalDeleted > 0) {
+        logger.info(`数据库清理完成: 删除 ${result.deletedChatRecords} 条聊天记录, ${result.deletedImageRecords} 条图片记录, ${result.deletedFileRecords} 条文件记录`)
+      } else if (config.debug) {
+        logger.info('数据库清理完成: 没有过期记录需要清理')
+      }
+
+    } catch (error: any) {
+      logger.error('执行数据库清理时发生错误', error)
+    }
+  }
+
+  // 数据库清理调度器
+  let cleanupScheduler: NodeJS.Timeout | null = null
+
+  // 设置定时数据库清理任务（每小时执行一次）
+  const scheduleDbCleanup = (): void => {
+    if (cleanupScheduler) {
+      clearInterval(cleanupScheduler)
+    }
+
+    // 每小时清理一次数据库
+    cleanupScheduler = setInterval(async () => {
+      await executeDatabaseCleanup()
+    }, 60 * 60 * 1000) // 1小时 = 60分钟 × 60秒 × 1000毫秒
+
+    if (config.debug) {
+      logger.info('数据库清理任务已启动，每小时执行一次')
+    }
   }
 
   // 初始化插件
@@ -686,9 +729,17 @@ export function apply(ctx: Context, config: Config) {
         scheduleAutoUpload()
       }
       
+      // 启动数据库清理任务
+      if (config.chatLog.enabled) {
+        scheduleDbCleanup()
+        // 启动时执行一次清理
+        setTimeout(() => executeDatabaseCleanup(), 5000) // 延迟5秒启动，避免启动时资源竞争
+      }
+      
       // 显示初始化状态
       if (config.debug) {
         logger.info('插件初始化完成 (调试模式已开启)')
+        logger.info(`数据库记录保留时间: ${config.chatLog.dbRetentionHours} 小时`)
       } else {
         logger.info('插件初始化完成')
       }
@@ -761,6 +812,10 @@ export function apply(ctx: Context, config: Config) {
     if (uploadScheduler) {
       clearTimeout(uploadScheduler)
       uploadScheduler = null
+    }
+    if (cleanupScheduler) {
+      clearInterval(cleanupScheduler)
+      cleanupScheduler = null
     }
     logger.info('聊天记录插件已卸载，已清理所有定时任务')
   })

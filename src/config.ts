@@ -21,7 +21,10 @@ export const ConfigSchema: Schema<Config> = Schema.object({
       .min(1).max(365).default(3),
     maxFileSize: Schema.number()
       .description('单个日志文件最大大小(MB)')
-      .min(1).max(100).default(10)
+      .min(1).max(100).default(10),
+    dbRetentionHours: Schema.number()
+      .description('数据库记录保留小时数（建议24小时，用作缓存）')
+      .min(1).max(168).default(24)
   }).description('聊天记录配置'),
   
   s3: Schema.object({

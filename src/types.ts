@@ -16,6 +16,7 @@ export interface Config {
     maxFileSize: number      // 单个日志文件最大大小(MB)
     autoUploadTime: string   // 自动上传时间（HH:mm格式）
     retentionDays: number    // 本地文件保留天数
+    dbRetentionHours: number // 数据库记录保留小时数（建议24小时，用作缓存）
   }
   
   // 监控配置
@@ -23,6 +24,11 @@ export interface Config {
     enabledGroups: string[]  // 监控的群组ID列表（空则监控所有群组）
     excludedUsers: string[]  // 不监控的用户QQ号列表
     excludeBots: boolean     // 是否排除机器人消息
+  }
+  
+  // 管理员配置
+  admin: {
+    adminIds: string[]       // 管理员QQ号列表
   }
   
   // 调试配置

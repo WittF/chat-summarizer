@@ -128,4 +128,65 @@ export class DatabaseOperations {
       }
     }
   }
+
+  // 清理过期的数据库记录
+  async cleanupExpiredRecords(retentionHours: number): Promise<{ 
+    deletedChatRecords: number, 
+    deletedImageRecords: number, 
+    deletedFileRecords: number 
+  }> {
+    try {
+      const cutoffTime = Date.now() - (retentionHours * 60 * 60 * 1000)
+      
+      // 查找需要删除的聊天记录
+      const expiredChatRecords = await this.ctx.database.get('chat_records', {
+        timestamp: { $lt: cutoffTime }
+      })
+      
+      const expiredMessageIds = expiredChatRecords.map(record => record.messageId)
+      
+      // 删除聊天记录
+      await this.ctx.database.remove('chat_records', {
+        timestamp: { $lt: cutoffTime }
+      })
+      
+      // 删除关联的图片记录
+      let deletedImageRecords = 0
+      if (expiredMessageIds.length > 0) {
+        const imageRecordsToDelete = await this.ctx.database.get('image_records', {
+          messageId: { $in: expiredMessageIds }
+        })
+        deletedImageRecords = imageRecordsToDelete.length
+        
+        if (deletedImageRecords > 0) {
+          await this.ctx.database.remove('image_records', {
+            messageId: { $in: expiredMessageIds }
+          })
+        }
+      }
+      
+      // 删除关联的文件记录
+      let deletedFileRecords = 0
+      if (expiredMessageIds.length > 0) {
+        const fileRecordsToDelete = await this.ctx.database.get('file_records', {
+          messageId: { $in: expiredMessageIds }
+        })
+        deletedFileRecords = fileRecordsToDelete.length
+        
+        if (deletedFileRecords > 0) {
+          await this.ctx.database.remove('file_records', {
+            messageId: { $in: expiredMessageIds }
+          })
+        }
+      }
+      
+      return {
+        deletedChatRecords: expiredChatRecords.length,
+        deletedImageRecords,
+        deletedFileRecords
+      }
+    } catch (error: any) {
+      throw new Error(`清理过期记录失败: ${error?.message || '未知错误'}`)
+    }
+  }
 } 
