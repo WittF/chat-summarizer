@@ -135,7 +135,7 @@ export class MarkdownToImageService {
         })
         
         // 额外等待确保渲染完成
-        await page.waitForTimeout(500)
+        await new Promise(resolve => setTimeout(resolve, 500))
         
         // 获取内容区域并截图
         const element = await page.$('.markdown-body')
