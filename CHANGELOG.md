@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/WittF/chat-summarizer/compare/v1.8.2...v1.9.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **md-to-image:** 增加本地字体支持，优化字体加载和CSS生成 ([9fcb3df](https://github.com/WittF/chat-summarizer/commit/9fcb3dfec83bfda3d3ad3e3d097f212f53229ebb))
+
 ## [1.8.2](https://github.com/WittF/chat-summarizer/compare/v1.8.1...v1.8.2) (2025-07-06)
 
 ### 🐛 Bug修复
