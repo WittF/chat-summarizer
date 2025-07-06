@@ -31,6 +31,20 @@ export interface Config {
     adminIds: string[]       // 管理员QQ号列表
   }
   
+  // AI总结配置
+  ai: {
+    enabled: boolean         // 是否启用AI总结功能
+    apiUrl: string          // AI接口URL
+    apiKey: string          // AI接口密钥
+    model?: string          // AI模型名称（可选）
+    maxTokens?: number      // 最大token数（可选）
+    timeout?: number        // 请求超时时间（秒，可选）
+    systemPrompt?: string   // 系统提示词（可选）
+    userPromptTemplate?: string // 用户提示词模板（可选）
+    useFileMode?: boolean   // 是否使用文件模式发送聊天记录（可选）
+    fileName?: string       // 文件模式下的文件名（可选）
+  }
+  
   // 调试配置
   debug: boolean             // 调试模式
 }

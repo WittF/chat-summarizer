@@ -14,7 +14,7 @@
     "chat"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --outfile=lib/index.js --format=cjs --platform=node --external:koishi --external:@aws-sdk/client-s3 --external:@aws-sdk/lib-storage --external:axios && tsc --emitDeclarationOnly",
+    "build": "esbuild src/index.ts --bundle --outfile=lib/index.js --format=cjs --platform=node --external:koishi --external:@aws-sdk/client-s3 --external:@aws-sdk/lib-storage --external:axios --external:puppeteer --external:github-markdown-css && tsc --emitDeclarationOnly",
     "clean": "rimraf lib",
     "prepublishOnly": "npm run clean && npm run build",
     "semantic-release": "semantic-release"
@@ -22,7 +22,9 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.658.1",
     "@aws-sdk/lib-storage": "^3.658.1",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "github-markdown-css": "^5.8.1",
+    "puppeteer": "^22.0.0"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",

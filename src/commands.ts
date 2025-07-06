@@ -4,10 +4,15 @@ import { DatabaseOperations } from './database'
 import { S3Uploader } from './s3-uploader'
 import { safeJsonParse } from './utils'
 import { ExportManager, ExportRequest } from './export'
+import { AIService } from './ai-service'
+import { MarkdownToImageService } from './md-to-image'
+import axios from 'axios'
 
 // 命令处理类
 export class CommandHandler {
   private exportManager: ExportManager
+  private aiService: AIService
+  private mdToImageService: MarkdownToImageService
 
   constructor(
     private ctx: Context,
@@ -18,6 +23,8 @@ export class CommandHandler {
     private getNextExecutionTime: (targetTime: string) => Date
   ) {
     this.exportManager = new ExportManager(ctx, s3Uploader, getStorageDir)
+    this.aiService = new AIService(ctx, config)
+    this.mdToImageService = new MarkdownToImageService(ctx)
   }
 
   // 处理用户ID，去除平台前缀，只保留QQ号
@@ -37,16 +44,17 @@ export class CommandHandler {
   }
 
   // 封装发送消息的函数，处理私聊和群聊的不同格式
-  private async sendMessage(session: Session, content: any[]): Promise<void> {
+  private async sendMessage(session: Session, content: any[]): Promise<string[]> {
     try {
       const promptMessage = session.channelId?.startsWith('private:')
         ? [h.quote(session.messageId), ...content]
         : [h.quote(session.messageId), h.at(session.userId), '\n', ...content]
 
-      await session.send(promptMessage)
+      return await session.send(promptMessage)
     } catch (error: any) {
       const normalizedUserId = this.normalizeQQId(session.userId)
       console.error(`向QQ(${normalizedUserId})发送消息失败: ${error?.message || '未知错误'}`)
+      return []
     }
   }
 
@@ -67,11 +75,26 @@ export class CommandHandler {
     // 导出命令
     this.ctx.command('cs.export <guildId> <timeRange> [format]', '导出聊天记录（仅管理员可用）')
       .option('format', '-f <format:string>', { fallback: 'json' })
+      .option('types', '-t <types:string>', { fallback: '' })
+      .option('summarize', '-s, --summarize', { type: 'boolean', fallback: false })
+      .option('image', '-i, --image', { type: 'boolean', fallback: false })
       .example('cs.export current yesterday - 导出当前群昨天的记录')
       .example('cs.export 123456789 2024-01-01,2024-01-31 txt - 导出指定群1月份记录为文本格式')
       .example('cs.export current last7days csv - 导出当前群最近7天记录为CSV格式')
+      .example('cs.export current today txt -t text - 只导出文本类型消息')
+      .example('cs.export current yesterday json -t text,image - 导出文本和图片消息')
+      .example('cs.export current yesterday txt --summarize - 导出并生成AI总结')
+      .example('cs.export current yesterday txt --summarize --image - 导出并生成AI总结图片')
       .action(async ({ session, options }, guildId, timeRange, format) => {
-        await this.handleExportCommand(session, guildId, timeRange, format || options?.format || 'json')
+        await this.handleExportCommand(
+          session, 
+          guildId, 
+          timeRange, 
+          format || options?.format || 'json',
+          options?.types || '',
+          !!options?.summarize,
+          !!options?.image
+        )
       })
   }
 
@@ -184,6 +207,7 @@ export class CommandHandler {
     statusText += '⚙️ 配置状态:\n'
     statusText += `• 聊天记录: ${this.config.chatLog.enabled ? '✅ 已启用' : '❌ 已禁用'}\n`
     statusText += `• S3存储: ${this.config.s3.enabled ? '✅ 已启用' : '❌ 已禁用'}\n`
+    statusText += `• AI总结: ${this.config.ai.enabled ? '✅ 已启用' : '❌ 已禁用'}\n`
     statusText += `• 图片上传: ✅ 已启用\n`
     statusText += `• 调试模式: ${this.config.debug ? '✅ 已启用' : '❌ 已禁用'}\n`
     statusText += `• 数据库缓存: ${this.config.chatLog.dbRetentionHours} 小时\n`
@@ -195,6 +219,15 @@ export class CommandHandler {
       statusText += `• 存储桶: ${this.config.s3.bucket}\n`
       statusText += `• 路径前缀: ${this.config.s3.pathPrefix}\n`
       statusText += `• 连接状态: ${this.s3Uploader ? '✅ 已连接' : '❌ 未连接'}\n`
+    }
+    
+    // AI配置详情
+    if (this.config.ai.enabled) {
+      statusText += '\n🤖 AI配置:\n'
+      statusText += `• API地址: ${this.config.ai.apiUrl || '未配置'}\n`
+      statusText += `• 模型: ${this.config.ai.model || 'gpt-3.5-turbo'}\n`
+      statusText += `• 最大Token: ${this.config.ai.maxTokens || 2000}\n`
+      statusText += `• 连接状态: ${this.aiService.isEnabled() ? '✅ 已配置' : '❌ 未配置'}\n`
     }
     
     // 监控配置
@@ -229,7 +262,15 @@ export class CommandHandler {
   }
 
   // 处理导出命令
-  private async handleExportCommand(session: Session, guildId: string, timeRange: string, format: string): Promise<void> {
+  private async handleExportCommand(
+    session: Session, 
+    guildId: string, 
+    timeRange: string, 
+    format: string, 
+    types: string,
+    enableSummarize: boolean,
+    enableImageSummary: boolean
+  ): Promise<void> {
     try {
       // 检查权限
       if (!this.isAdmin(session.userId)) {
@@ -241,6 +282,12 @@ export class CommandHandler {
       const validFormats = ['json', 'txt', 'csv']
       if (!validFormats.includes(format.toLowerCase())) {
         await this.sendMessage(session, [h.text(`❌ 无效的导出格式: ${format}\n\n支持的格式: ${validFormats.join(', ')}`)])
+        return
+      }
+
+      // 检查AI总结功能
+      if (enableSummarize && !this.aiService.isEnabled()) {
+        await this.sendMessage(session, [h.text('❌ AI总结功能未启用或配置不完整，请检查AI配置')])
         return
       }
 
@@ -263,32 +310,131 @@ export class CommandHandler {
       }
 
       // 发送处理中消息
-      await this.sendMessage(session, [h.text('🔄 正在处理导出请求，请稍候...')])
+      const processingMessage = enableSummarize 
+        ? '🔄 正在导出聊天记录并生成AI总结，请稍候...' 
+        : '🔄 正在处理导出请求，请稍候...'
+      const tempMessage = await this.sendMessage(session, [h.text(processingMessage)])
 
       // 构建导出请求
       const exportRequest: ExportRequest = {
         guildId: targetGuildId,
         timeRange: timeRange,
-        format: format.toLowerCase() as 'json' | 'txt' | 'csv'
+        format: format.toLowerCase() as 'json' | 'txt' | 'csv',
+        messageTypes: types ? types.split(',').map(t => t.trim()).filter(t => t) : undefined
       }
 
       // 执行导出
       const result = await this.exportManager.exportChatData(exportRequest)
 
-      if (result.success && result.s3Url) {
-        // 导出成功
-        await this.sendMessage(session, [
-          h.text(result.message || '导出成功！'),
-          h.text(`\n\n📥 下载链接: ${result.s3Url}`)
-        ])
-      } else {
+      if (!result.success || !result.s3Url) {
+        // 删除临时消息
+        if (tempMessage && tempMessage[0]) {
+          await session.bot.deleteMessage(session.channelId, tempMessage[0])
+        }
         // 导出失败
         await this.sendMessage(session, [h.text(result.error || '导出失败')])
+        return
       }
+
+      // 基础导出成功消息
+      let responseMessage = result.message || '导出成功！'
+      responseMessage += `\n\n📥 下载链接: ${result.s3Url}`
+
+      // 如果启用AI总结，生成总结
+      if (enableSummarize) {
+        let aiTempMessage: string[] = []
+        try {
+          aiTempMessage = await this.sendMessage(session, [h.text('📝 正在生成AI总结...')])
+          
+          // 下载导出的文件内容
+          const fileContent = await this.downloadExportContent(result.s3Url)
+          
+          if (!fileContent) {
+            responseMessage += '\n\n⚠️ 无法下载导出文件进行AI总结'
+          } else {
+            // 生成AI总结
+            const summary = await this.aiService.generateSummary(
+              fileContent,
+              timeRange,
+              this.extractMessageCount(result.message || ''),
+              targetGuildId || 'private'
+            )
+            
+            // 如果启用图片总结，转换为图片发送
+            if (enableImageSummary) {
+              let imgTempMessage: string[] = []
+              try {
+                imgTempMessage = await this.sendMessage(session, [h.text('🖼️ 正在生成总结图片...')])
+                
+                const imageBuffer = await this.mdToImageService.convertToImage(summary)
+                
+                // 删除图片生成临时消息
+                if (imgTempMessage && imgTempMessage[0]) {
+                  await session.bot.deleteMessage(session.channelId, imgTempMessage[0])
+                }
+                
+                // 发送图片
+                await this.sendMessage(session, [h.image(imageBuffer, 'image/png')])
+                
+                // 不在文本消息中包含总结内容，只包含基础信息
+                responseMessage += '\n\n✅ AI总结已生成并发送为图片'
+              } catch (error: any) {
+                // 删除图片生成临时消息(如果存在)
+                if (imgTempMessage && imgTempMessage[0]) {
+                  await session.bot.deleteMessage(session.channelId, imgTempMessage[0])
+                }
+                responseMessage += '\n\n❌ 图片生成失败: ' + (error?.message || '未知错误')
+                responseMessage += '\n\n🤖 AI总结:\n' + summary
+              }
+            } else {
+              responseMessage += '\n\n🤖 AI总结:\n' + summary
+            }
+            
+            // 删除AI总结临时消息
+            if (aiTempMessage && aiTempMessage[0]) {
+              await session.bot.deleteMessage(session.channelId, aiTempMessage[0])
+            }
+          }
+                  } catch (error: any) {
+            // 删除AI总结临时消息
+            if (aiTempMessage && aiTempMessage[0]) {
+              await session.bot.deleteMessage(session.channelId, aiTempMessage[0])
+            }
+            responseMessage += '\n\n❌ AI总结过程中发生错误: ' + (error?.message || '未知错误')
+          }
+      }
+
+      // 删除初始的临时消息
+      if (tempMessage && tempMessage[0]) {
+        await session.bot.deleteMessage(session.channelId, tempMessage[0])
+      }
+
+      // 发送最终结果
+      await this.sendMessage(session, [h.text(responseMessage)])
 
     } catch (error: any) {
       console.error('处理导出命令失败:', error)
       await this.sendMessage(session, [h.text(`❌ 导出过程中发生错误: ${error?.message || '未知错误'}`)])
     }
+  }
+
+  // 下载导出文件内容
+  private async downloadExportContent(url: string): Promise<string | null> {
+    try {
+      const response = await axios.get(url, { 
+        timeout: 30000,
+        responseType: 'text'
+      })
+      return response.data
+    } catch (error) {
+      console.error('下载导出文件失败:', error)
+      return null
+    }
+  }
+
+  // 从导出结果消息中提取消息数量
+  private extractMessageCount(message: string): number {
+    const match = message.match(/📊 消息数量: (\d+) 条/)
+    return match ? parseInt(match[1]) : 0
   }
 } 

@@ -1,30 +1,18 @@
 # koishi-plugin-chat-summarizer
 
-[![semantic-release: angular](https://img.shields.io/badge/semantic--release-angular-e10079?logo=semantic-release)](https://github.com/semantic-release/semantic-release)
 [![npm version](https://badge.fury.io/js/koishi-plugin-chat-summarizer.svg)](https://badge.fury.io/js/koishi-plugin-chat-summarizer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > Koishi 聊天记录收集和上传插件
 
-一个功能完整的 Koishi 插件，用于收集、处理和上传聊天记录到 S3 兼容存储。
+## 主要功能
 
-## ✨ 特性
-
-- 📝 **聊天记录收集**: 自动收集群聊消息并保存到本地
-- 🖼️ **图片处理**: 自动上传图片到 S3 存储并替换链接
-- 📎 **文件上传**: 支持 60+ 种文件格式的自动上传
-- ⏰ **定时任务**: 可配置的自动上传时间
-- 🗃️ **数据管理**: 完整的数据库记录和本地文件管理
-- 🛡️ **错误处理**: 健壮的错误处理和重试机制
-- 🌐 **S3 兼容**: 支持 AWS S3、MinIO 等 S3 兼容存储
-
-## 🚀 功能说明
-
-- **消息处理**: 自动收集群聊消息（跳过私聊），解析图片和文件链接
-- **文件上传**: 支持图片、文档、压缩包、音视频等多种格式
-- **存储结构**: 按日期和群组组织，便于管理和查找
-- **定时任务**: 每日自动上传前一天的聊天记录
-- **数据库缓存**: 数据库仅保留24小时记录作为缓存，避免性能问题
+- 自动收集群聊消息并保存到本地
+- 自动上传图片、文件到 S3 存储
+- 支持多种格式和时间范围的聊天记录导出
+- 支持AI总结功能（文本/图片格式）
+- 定时任务和数据库缓存管理
+- 支持 AWS S3、MinIO 等 S3 兼容存储
 
 ## 📚 API
 
@@ -35,16 +23,25 @@
   - 使用方法：回复包含图片或文件的消息，然后发送 `cs.geturl` 命令
   - 权限要求：需要在配置中的 `admin.adminIds` 列表中
   - ⚠️ 限制：只能查询最近24小时内的消息（数据库缓存期限）
-- `cs.export <群组> <时间范围> [格式]`: 导出指定时间范围的聊天记录（仅管理员可用）
+- `cs.export <群组> <时间范围> [格式] [-t 消息类型] [-s]`: 导出指定时间范围的聊天记录（仅管理员可用）
   - 群组参数：
     - `current` - 当前群（仅在群聊中有效）
     - `123456789` - 具体群号
-    - `private` - 私聊记录
   - 时间范围：
     - 预设：`today`, `yesterday`, `last7days`, `lastweek`, `thismonth`, `lastmonth`
     - 具体日期：`2024-01-01` 或 `2024-01-01,2024-01-31`
     - 简化格式：`01-01` 或 `01-01,01-31`（当年）
   - 格式：`json`（默认）、`txt`（简化格式）、`csv`
+  - 消息类型过滤（可选）：
+    - `-t text` - 只导出纯文本消息
+    - `-t image` - 只导出图片消息
+    - `-t mixed` - 只导出包含图片和文字的混合消息
+    - `-t other` - 只导出其他类型消息
+    - `-t text,image` - 导出多种类型（用逗号分隔）
+    - 不指定时导出所有类型
+  - AI总结选项（可选）：
+    - `-s` 或 `--summarize` - 导出完成后自动生成AI总结
+    - 需要配置AI接口才能使用
   - 数据来源：优先本地文件，然后从S3下载
   - ⚠️ 完整性要求：必须所有日期的数据都存在才会导出，否则拒绝部分导出
   - 📝 TXT格式说明：使用简化时间格式（去除毫秒），仅保留时间、用户名和消息内容
@@ -66,9 +63,13 @@
 
 3. **导出聊天记录**：
    ```
-   cs.export current yesterday        # 导出当前群昨天的记录（JSON格式）
-   cs.export 123456789 last7days txt # 导出指定群最近7天记录为文本格式
+   cs.export current yesterday        # 导出当前群昨天的记录（JSON格式，所有类型）
    cs.export current 2024-01-01,2024-01-31 csv # 导出当前群1月份记录为CSV格式
-   cs.export private thismonth       # 导出本月私聊记录
+   cs.export current today txt -t text # 只导出当前群今天的纯文本消息
+   cs.export 123456789 lastweek txt -t mixed # 导出包含图片的混合消息
    ```
 
+4. **AI总结功能**：
+   ```
+   cs.export 123456789 today json -t text -s # 导出今天的文本消息并AI总结
+   cs.export 123456789 today txt -t text -s -i # 导出今天的文本消息并AI总结并生成图片

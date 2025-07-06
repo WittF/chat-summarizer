@@ -8,6 +8,7 @@ export interface ExportRequest {
   guildId?: string       // 群组ID，undefined表示私聊
   timeRange: string      // 时间范围
   format: 'json' | 'txt' | 'csv'
+  messageTypes?: string[] // 要导出的消息类型，默认为所有类型
 }
 
 export interface ExportResult {
@@ -232,8 +233,13 @@ export class ExportManager {
   /**
    * 读取和解析聊天记录文件
    */
-  private async parseMessageFiles(filePaths: string[]): Promise<ChatMessage[]> {
+  private async parseMessageFiles(filePaths: string[], messageTypes?: string[]): Promise<ChatMessage[]> {
     const messages: ChatMessage[] = []
+    
+    // 默认导出所有类型的消息
+    const allowedTypes = messageTypes && messageTypes.length > 0 
+      ? messageTypes 
+      : ['text', 'image', 'mixed', 'other']
 
     for (const filePath of filePaths) {
       try {
@@ -244,13 +250,18 @@ export class ExportManager {
           try {
             const record = safeJsonParse(line, null)
             if (record && record.timestamp && record.username && record.content) {
-              messages.push({
-                time: formatDateInUTC8(record.timestamp),
-                username: record.username,
-                content: record.content,
-                guildId: record.guildId,
-                messageType: record.messageType || 'text'
-              })
+              const messageType = record.messageType || 'text'
+              
+              // 只导出指定类型的消息
+              if (allowedTypes.includes(messageType)) {
+                messages.push({
+                  time: formatDateInUTC8(record.timestamp),
+                  username: record.username,
+                  content: record.content,
+                  guildId: record.guildId,
+                  messageType: messageType
+                })
+              }
             }
           } catch {
             // 跳过解析失败的行
@@ -357,14 +368,17 @@ export class ExportManager {
       // 从S3下载需要的文件
       const downloadedFiles = s3Files.length > 0 ? await this.downloadFromS3(s3Files) : []
       
-      // 解析所有消息
+      // 解析所有消息，应用消息类型过滤
       const allFiles = [...localFiles, ...downloadedFiles]
-      const messages = await this.parseMessageFiles(allFiles)
+      const messages = await this.parseMessageFiles(allFiles, request.messageTypes)
       
       if (messages.length === 0) {
+        const typeFilter = request.messageTypes && request.messageTypes.length > 0 
+          ? ` (消息类型: ${request.messageTypes.join(', ')})` 
+          : ''
         return {
           success: false,
-          error: '❌ 虽然找到了数据文件，但没有解析到有效的聊天记录'
+          error: `❌ 虽然找到了数据文件，但没有解析到有效的聊天记录${typeFilter}`
         }
       }
 
@@ -374,7 +388,10 @@ export class ExportManager {
       // 生成导出文件名
       const groupKey = request.guildId || 'private'
       const timeStr = request.timeRange.replace(/[,\s]/g, '_')
-      const exportFileName = `export_${groupKey}_${timeStr}_${Date.now()}.${request.format}`
+      const typeStr = request.messageTypes && request.messageTypes.length > 0 
+        ? `_${request.messageTypes.join('-')}` 
+        : ''
+      const exportFileName = `export_${groupKey}_${timeStr}${typeStr}_${Date.now()}.${request.format}`
       
       // 上传到S3
       if (this.s3Uploader) {
@@ -392,6 +409,10 @@ export class ExportManager {
           // 应用URL替换
           const finalUrl = replaceImageUrl(result.url)
           
+          const typeInfo = request.messageTypes && request.messageTypes.length > 0 
+            ? `📋 消息类型: ${request.messageTypes.join(', ')}\n` 
+            : ''
+          
           return {
             success: true,
             s3Url: finalUrl,
@@ -399,6 +420,7 @@ export class ExportManager {
                      `📊 消息数量: ${messages.length} 条\n` +
                      `📅 时间范围: ${timeRange.dateStrings.join(', ')}\n` +
                      `📄 格式: ${request.format.toUpperCase()}\n` +
+                     typeInfo +
                      `💾 数据来源: ${localFiles.length} 个本地文件 + ${s3Files.length} 个S3文件`
           }
         } else {
