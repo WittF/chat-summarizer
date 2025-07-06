@@ -1,3 +1,9 @@
+## [1.8.2](https://github.com/WittF/chat-summarizer/compare/v1.8.1...v1.8.2) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 增强emoji字体兼容性，优化字体加载和渲染效果 ([affa0fb](https://github.com/WittF/chat-summarizer/commit/affa0fb4c8b6e2b0999ef5aec98dbc52dc0e4d76))
+
 ## [1.8.1](https://github.com/WittF/chat-summarizer/compare/v1.8.0...v1.8.1) (2025-07-06)
 
 ### 🐛 Bug修复
