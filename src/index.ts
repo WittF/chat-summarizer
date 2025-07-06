@@ -84,14 +84,30 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 添加回复信息前缀
-  const addReplyPrefix = (content: string, session: Session): string => {
+  const addReplyPrefix = async (content: string, session: Session): Promise<string> => {
     if (!session.quote) {
       return content
     }
 
     const quoteAuthor = session.quote.user?.name || session.quote.user?.username || CONSTANTS.DEFAULTS.QUOTE_AUTHOR_FALLBACK
-    const quoteContent = session.quote.content || ''
     const quoteId = session.quote.messageId || ''
+    let quoteContent = session.quote.content || ''
+    
+    // 如果有回复消息ID，尝试从数据库获取已处理的内容
+    if (quoteId) {
+      try {
+        const existingRecord = await ctx.database.get('chat_records', { messageId: quoteId })
+        if (existingRecord.length > 0) {
+          // 使用数据库中已经处理过的内容（URL已替换）
+          quoteContent = existingRecord[0].content
+        }
+      } catch (error) {
+        // 如果查询失败，继续使用原始内容
+        if (config.debug) {
+          logger.debug(`无法从数据库获取回复消息内容: ${quoteId}`)
+        }
+      }
+    }
     
     let replyPrefix = ''
     if (quoteContent) {
@@ -825,7 +841,7 @@ export function apply(ctx: Context, config: Config) {
       const processed = messageService.processElements(session.elements)
       
       let content = processed.content
-      content = addReplyPrefix(content, session)
+      content = await addReplyPrefix(content, session)
 
               const record: Omit<ChatRecord, 'id'> = {
           messageId,
