@@ -1,3 +1,9 @@
+## [1.9.2](https://github.com/WittF/chat-summarizer/compare/v1.9.1...v1.9.2) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 修改字体加载策略，将font-display属性从swap更改为block，并增加字体加载超时时间至15000ms ([d51c405](https://github.com/WittF/chat-summarizer/commit/d51c4055d97e61cf5899b3accff57d83443dae7f))
+
 ## [1.9.1](https://github.com/WittF/chat-summarizer/compare/v1.9.0...v1.9.1) (2025-07-06)
 
 ### 🐛 Bug修复
