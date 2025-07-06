@@ -1,3 +1,9 @@
+## [1.12.0](https://github.com/WittF/chat-summarizer/compare/v1.11.2...v1.12.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **md-to-image:** 优化emoji处理逻辑，使用正则表达式动态转换emoji为CDN图片，并添加获取emoji Unicode码点的功能 ([ba47ca9](https://github.com/WittF/chat-summarizer/commit/ba47ca98d725ad99441a5c6d510506f43aea17c0))
+
 ## [1.11.2](https://github.com/WittF/chat-summarizer/compare/v1.11.1...v1.11.2) (2025-07-06)
 
 ### ♻️ 代码重构
