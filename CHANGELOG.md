@@ -1,3 +1,13 @@
+## [1.8.0](https://github.com/WittF/chat-summarizer/compare/v1.7.0...v1.8.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* 发布新版本，增强AI服务配置，支持群组专用设置 ([6bebcf1](https://github.com/WittF/chat-summarizer/commit/6bebcf1b575e0de840fa6d9e6e3f1f16d504b22a))
+
+### 🐛 Bug修复
+
+* **md-to-image:** 将page.waitForTimeout() 替换为标准的Promise + setTimeout实现 ([96c6be5](https://github.com/WittF/chat-summarizer/commit/96c6be5f4c1dbad1056906eee8587795d1f332c0))
+
 ## [1.7.0](https://github.com/WittF/chat-summarizer/compare/v1.6.0...v1.7.0) (2025-07-06)
 
 ### ✨ 功能更新
