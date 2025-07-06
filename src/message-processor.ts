@@ -5,6 +5,7 @@ export interface ProcessedMessage {
   messageType: 'text' | 'image' | 'mixed' | 'other'
   imageUrls: string[]
   fileUrls: Array<{ url: string; fileName: string }>
+  videoUrls: Array<{ url: string; fileName: string }>
 }
 
 export class MessageProcessor {
@@ -23,6 +24,7 @@ export class MessageProcessor {
     let hasImage = false
     const imageUrls: string[] = []
     const fileUrls: Array<{ url: string; fileName: string }> = []
+    const videoUrls: Array<{ url: string; fileName: string }> = []
 
     for (const element of elements) {
       switch (element.type) {
@@ -136,7 +138,11 @@ export class MessageProcessor {
 
         case 'video':
           const videoUrl = element.attrs?.src || element.attrs?.url || ''
+          const videoFileName = element.attrs?.file || element.attrs?.name || 
+                               (videoUrl ? videoUrl.split('/').pop()?.split('?')[0] || 'video.mp4' : 'video.mp4')
+          
           if (videoUrl) {
+            videoUrls.push({ url: videoUrl, fileName: videoFileName })
             content += `[视频: ${videoUrl}]`
           } else {
             content += '[视频]'
@@ -272,7 +278,8 @@ export class MessageProcessor {
       content: content.trim(),
       messageType,
       imageUrls,
-      fileUrls
+      fileUrls,
+      videoUrls
     }
   }
 
@@ -288,6 +295,13 @@ export class MessageProcessor {
    */
   hasFiles(elements: Element[]): boolean {
     return elements.some(element => element.type === 'file')
+  }
+
+  /**
+   * 检查消息是否包含视频
+   */
+  hasVideos(elements: Element[]): boolean {
+    return elements.some(element => element.type === 'video')
   }
 
   /**
@@ -325,6 +339,26 @@ export class MessageProcessor {
     }
     
     return fileUrls
+  }
+
+  /**
+   * 提取所有视频URL
+   */
+  extractVideoUrls(elements: Element[]): Array<{ url: string; fileName: string }> {
+    const videoUrls: Array<{ url: string; fileName: string }> = []
+    
+    for (const element of elements) {
+      if (element.type === 'video') {
+        const videoUrl = element.attrs?.src || element.attrs?.url || ''
+        const videoFileName = element.attrs?.file || element.attrs?.name || 
+                             (videoUrl ? videoUrl.split('/').pop()?.split('?')[0] || 'video.mp4' : 'video.mp4')
+        if (videoUrl) {
+          videoUrls.push({ url: videoUrl, fileName: videoFileName })
+        }
+      }
+    }
+    
+    return videoUrls
   }
 
   /**

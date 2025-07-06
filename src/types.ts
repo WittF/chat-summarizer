@@ -49,6 +49,7 @@ export interface ChatRecord {
   messageType: 'text' | 'image' | 'mixed' | 'other' // 消息类型
   imageUrls?: string       // 图片URL列表（JSON格式）
   fileUrls?: string        // 文件URL列表（JSON格式）
+  videoUrls?: string       // 视频URL列表（JSON格式）
   uploadedAt?: number      // 上传到S3的时间戳
   isUploaded: boolean      // 是否已上传到S3
 }
@@ -76,6 +77,18 @@ export interface FileRecord {
   messageId: string       // 关联的消息ID
 }
 
+// 视频上传记录
+export interface VideoRecord {
+  id?: number              // 数据库自增ID
+  originalUrl: string      // 原始视频URL
+  s3Url: string           // S3存储URL
+  s3Key: string           // S3存储键
+  fileName: string        // 视频文件名
+  fileSize: number        // 文件大小（字节）
+  uploadedAt: number      // 上传时间戳
+  messageId: string       // 关联的消息ID
+}
+
 // 插件统计信息
 export interface PluginStats {
   totalMessages: number
@@ -90,5 +103,6 @@ declare module 'koishi' {
     chat_records: ChatRecord
     image_records: ImageRecord
     file_records: FileRecord
+    video_records: VideoRecord
   }
 } 

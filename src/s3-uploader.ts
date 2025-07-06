@@ -233,6 +233,58 @@ export class S3Uploader {
   }
 
   /**
+   * 从URL下载视频并上传到S3
+   */
+  public async uploadVideoFromUrl(
+    videoUrl: string,
+    key: string,
+    fileName?: string,
+    maxSize?: number
+  ): Promise<UploadResult> {
+    try {
+      // 使用axios下载视频，确保对各种URL格式的兼容性
+      const downloadConfig = {
+        responseType: 'arraybuffer' as const,
+        timeout: 300000, // 5分钟超时（视频文件可能很大）
+        maxContentLength: maxSize || 500 * 1024 * 1024, // 默认500MB限制
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      }
+
+      const response = await axios.get(videoUrl, downloadConfig)
+
+      if (!response.data) {
+        return {
+          success: false,
+          error: '下载视频失败：响应数据为空'
+        }
+      }
+
+      // 将ArrayBuffer转换为Buffer
+      const buffer = Buffer.from(response.data)
+      
+      // 检查文件大小
+      if (maxSize && buffer.length > maxSize) {
+        return {
+          success: false,
+          error: `视频文件过大: ${Math.round(buffer.length / 1024 / 1024)}MB > ${Math.round(maxSize / 1024 / 1024)}MB`
+        }
+      }
+
+      // 确定内容类型
+      const contentType = this.getVideoContentType(videoUrl, fileName, response.headers?.['content-type'])
+
+      return await this.uploadBuffer(buffer, key, contentType)
+    } catch (error: any) {
+      return {
+        success: false,
+        error: handleError(error, '下载或上传视频失败')
+      }
+    }
+  }
+
+  /**
    * 批量上传聊天记录文件
    */
   public async uploadChatLogFiles(
@@ -401,6 +453,39 @@ export class S3Uploader {
   }
 
   /**
+   * 获取视频内容类型
+   */
+  private getVideoContentType(url: string, fileName?: string, headerContentType?: string): string {
+    // 优先使用响应头中的内容类型
+    if (headerContentType && headerContentType.startsWith('video/')) {
+      return headerContentType
+    }
+
+    // 从文件名推断
+    if (fileName) {
+      const extension = path.extname(fileName).toLowerCase()
+      if (extension) {
+        const contentType = this.getContentTypeFromExtension(extension)
+        if (contentType.startsWith('video/')) {
+          return contentType
+        }
+      }
+    }
+
+    // 从URL推断
+    const extension = url.toLowerCase().match(/\.([a-z0-9]+)(?:\?|$)/)?.[1]
+    if (extension) {
+      const contentType = this.getContentTypeFromExtension(`.${extension}`)
+      if (contentType.startsWith('video/')) {
+        return contentType
+      }
+    }
+
+    // 默认为MP4
+    return 'video/mp4'
+  }
+
+  /**
    * 生成用于存储的S3键名
    */
   public static generateImageKey(messageId: string, originalUrl: string, guildId?: string, index: number = 0): string {
@@ -428,6 +513,21 @@ export class S3Uploader {
     const groupPath = guildId || 'private'
     
     return `files/${dateStr}/${groupPath}/${messageId}_${now}${suffix}.${extension}`
+  }
+
+  /**
+   * 生成用于视频存储的S3键名
+   */
+  public static generateVideoKey(messageId: string, originalUrl: string, fileName?: string, guildId?: string, index: number = 0): string {
+    const extension = S3Uploader.getVideoExtension(originalUrl, fileName)
+    const now = Date.now()
+    const dateStr = getDateStringInUTC8(now)
+    const suffix = index > 0 ? `_${index}` : ''
+    
+    // 构建路径：videos/日期/群号(或private)/消息ID_时间戳.扩展名
+    const groupPath = guildId || 'private'
+    
+    return `videos/${dateStr}/${groupPath}/${messageId}_${now}${suffix}.${extension}`
   }
 
   /**
@@ -478,6 +578,29 @@ export class S3Uploader {
       return match ? match[1] : 'bin'
     } catch {
       return 'bin'
+    }
+  }
+
+  /**
+   * 提取视频文件扩展名
+   */
+  private static getVideoExtension(url: string, fileName?: string): string {
+    // 优先从文件名提取扩展名
+    if (fileName) {
+      const fileExt = path.extname(fileName).toLowerCase().substring(1)
+      if (fileExt) {
+        return fileExt
+      }
+    }
+
+    // 从URL提取扩展名
+    try {
+      const urlObj = new URL(url)
+      const pathname = urlObj.pathname.toLowerCase()
+      const match = pathname.match(/\.([a-z0-9]+)$/i)
+      return match ? match[1] : 'mp4'
+    } catch {
+      return 'mp4'
     }
   }
 

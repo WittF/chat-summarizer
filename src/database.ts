@@ -1,5 +1,5 @@
 import { Context } from 'koishi'
-import { ChatRecord, ImageRecord, FileRecord, PluginStats } from './types'
+import { ChatRecord, ImageRecord, FileRecord, VideoRecord, PluginStats } from './types'
 
 // 扩展数据库模型
 export function extendDatabase(ctx: Context) {
@@ -16,6 +16,7 @@ export function extendDatabase(ctx: Context) {
     messageType: 'string',
     imageUrls: 'text',
     fileUrls: 'text',
+    videoUrls: 'text',
     uploadedAt: 'unsigned',
     isUploaded: 'boolean'
   }, {
@@ -35,6 +36,19 @@ export function extendDatabase(ctx: Context) {
   })
 
   ctx.model.extend('file_records', {
+    id: 'unsigned',
+    originalUrl: 'string',
+    s3Url: 'string',
+    s3Key: 'string',
+    fileName: 'string',
+    fileSize: 'unsigned',
+    uploadedAt: 'unsigned',
+    messageId: 'string'
+  }, {
+    autoInc: true,
+  })
+
+  ctx.model.extend('video_records', {
     id: 'unsigned',
     originalUrl: 'string',
     s3Url: 'string',
@@ -68,6 +82,12 @@ export class DatabaseOperations {
   async createFileRecord(record: Omit<FileRecord, 'id'>): Promise<FileRecord> {
     const result = await this.ctx.database.create('file_records', record)
     return (result as any)[0] as FileRecord
+  }
+
+  // 创建视频记录
+  async createVideoRecord(record: Omit<VideoRecord, 'id'>): Promise<VideoRecord> {
+    const result = await this.ctx.database.create('video_records', record)
+    return (result as any)[0] as VideoRecord
   }
 
   // 更新聊天记录
@@ -133,7 +153,8 @@ export class DatabaseOperations {
   async cleanupExpiredRecords(retentionHours: number): Promise<{ 
     deletedChatRecords: number, 
     deletedImageRecords: number, 
-    deletedFileRecords: number 
+    deletedFileRecords: number,
+    deletedVideoRecords: number 
   }> {
     try {
       const cutoffTime = Date.now() - (retentionHours * 60 * 60 * 1000)
@@ -180,10 +201,26 @@ export class DatabaseOperations {
         }
       }
       
+      // 删除关联的视频记录
+      let deletedVideoRecords = 0
+      if (expiredMessageIds.length > 0) {
+        const videoRecordsToDelete = await this.ctx.database.get('video_records', {
+          messageId: { $in: expiredMessageIds }
+        })
+        deletedVideoRecords = videoRecordsToDelete.length
+        
+        if (deletedVideoRecords > 0) {
+          await this.ctx.database.remove('video_records', {
+            messageId: { $in: expiredMessageIds }
+          })
+        }
+      }
+      
       return {
         deletedChatRecords: expiredChatRecords.length,
         deletedImageRecords,
-        deletedFileRecords
+        deletedFileRecords,
+        deletedVideoRecords
       }
     } catch (error: any) {
       throw new Error(`清理过期记录失败: ${error?.message || '未知错误'}`)

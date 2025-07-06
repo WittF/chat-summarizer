@@ -1,7 +1,7 @@
 import { Context, Session } from 'koishi'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { Config, ChatRecord, ImageRecord, FileRecord } from './types'
+import { Config, ChatRecord, ImageRecord, FileRecord, VideoRecord } from './types'
 import { name, inject, ConfigSchema, CONSTANTS } from './config'
 import { extendDatabase, DatabaseOperations } from './database'
 import { LoggerService, S3Service, MessageProcessorService } from './services'
@@ -118,20 +118,21 @@ export function apply(ctx: Context, config: Config) {
       const fileName = `${groupKey}_${dateStr}.jsonl`
       const filePath = path.join(logDir, fileName)
       
-      const logEntry = {
-        timestamp: record.timestamp,
-        time: formatDateInUTC8(record.timestamp),
-        messageId: record.messageId,
-        guildId: record.guildId,
-        channelId: record.channelId,
-        userId: record.userId,
-        username: record.username,
-        content: record.content,
-        messageType: record.messageType,
-        imageUrls: safeJsonParse(record.imageUrls, []),
-        fileUrls: safeJsonParse(record.fileUrls, []),
-        originalElements: safeJsonParse(record.originalElements, [])
-      }
+              const logEntry = {
+          timestamp: record.timestamp,
+          time: formatDateInUTC8(record.timestamp),
+          messageId: record.messageId,
+          guildId: record.guildId,
+          channelId: record.channelId,
+          userId: record.userId,
+          username: record.username,
+          content: record.content,
+          messageType: record.messageType,
+          imageUrls: safeJsonParse(record.imageUrls, []),
+          fileUrls: safeJsonParse(record.fileUrls, []),
+          videoUrls: safeJsonParse(record.videoUrls, []),
+          originalElements: safeJsonParse(record.originalElements, [])
+        }
       
       const logLine = safeJsonStringify(logEntry) + '\n'
       await fs.appendFile(filePath, logLine, 'utf8')
@@ -233,15 +234,60 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 异步处理图片和文件上传
+  // 上传视频到S3
+  const uploadVideoToS3 = async (videoUrl: string, fileName: string, messageId: string, guildId?: string): Promise<string | null> => {
+    const s3Uploader = s3Service.getUploader()
+    if (!s3Uploader) {
+      logger.error('S3上传器未初始化')
+      return null
+    }
+
+    try {
+      const s3Key = S3Uploader.generateVideoKey(messageId, videoUrl, fileName, guildId)
+      const result = await s3Uploader.uploadVideoFromUrl(videoUrl, s3Key, fileName)
+
+      if (result.success && result.url) {
+        // 替换URL域名
+        const finalUrl = replaceImageUrl(result.url)
+        
+        const videoRecord: Omit<VideoRecord, 'id'> = {
+          originalUrl: videoUrl,
+          s3Url: finalUrl,  // 使用替换后的URL
+          s3Key: result.key || s3Key,
+          fileName: fileName,
+          fileSize: result.fileSize || 0,
+          uploadedAt: Date.now(),
+          messageId: messageId
+        }
+
+        await dbOps.createVideoRecord(videoRecord)
+        
+        // 简化非调试模式的日志输出
+        if (config.debug) {
+          logger.info(`✅ 视频上传成功: ${fileName} -> ${finalUrl}`)
+        }
+        
+        return finalUrl  // 返回替换后的URL
+      } else {
+        logger.error(`❌ 视频上传失败: ${fileName} - ${result.error}`)
+        return null
+      }
+    } catch (error: any) {
+      logger.error(`❌ 上传视频时发生错误: ${fileName}`, error)
+      return null
+    }
+  }
+
+  // 异步处理图片、文件和视频上传
   const processFileUploadsAsync = async (
     imageUrls: string[], 
     fileUrls: Array<{ url: string; fileName: string }>,
+    videoUrls: Array<{ url: string; fileName: string }>,
     messageId: string, 
     guildId: string | undefined,
     originalRecord: ChatRecord
   ): Promise<void> => {
-    if (imageUrls.length === 0 && fileUrls.length === 0) {
+    if (imageUrls.length === 0 && fileUrls.length === 0 && videoUrls.length === 0) {
       return
     }
 
@@ -249,6 +295,7 @@ export function apply(ctx: Context, config: Config) {
       const urlMapping: Record<string, string> = {}
       const successfulImageUploads: string[] = []
       const successfulFileUploads: string[] = []
+      const successfulVideoUploads: string[] = []
 
       // 处理图片上传
       if (imageUrls.length > 0) {
@@ -282,8 +329,24 @@ export function apply(ctx: Context, config: Config) {
         })
       }
 
+      // 处理视频上传
+      if (videoUrls.length > 0) {
+        const videoUploadPromises = videoUrls.map(videoInfo => 
+          uploadVideoToS3(videoInfo.url, videoInfo.fileName, messageId, guildId)
+        )
+        
+        const videoUploadResults = await Promise.allSettled(videoUploadPromises)
+        
+        videoUploadResults.forEach((result, index) => {
+          if (result.status === 'fulfilled' && result.value) {
+            successfulVideoUploads.push(result.value)
+            urlMapping[videoUrls[index].url] = result.value
+          }
+        })
+      }
+
       // 更新数据库记录
-      if (successfulImageUploads.length > 0 || successfulFileUploads.length > 0) {
+      if (successfulImageUploads.length > 0 || successfulFileUploads.length > 0 || successfulVideoUploads.length > 0) {
         // 更新content中的链接
         let updatedContent = originalRecord.content
         Object.entries(urlMapping).forEach(([originalUrl, newUrl]) => {
@@ -302,6 +365,10 @@ export function apply(ctx: Context, config: Config) {
           updateData.fileUrls = safeJsonStringify(successfulFileUploads)
         }
 
+        if (successfulVideoUploads.length > 0) {
+          updateData.videoUrls = safeJsonStringify(successfulVideoUploads)
+        }
+
         await dbOps.updateChatRecord(messageId, updateData)
         
         // 更新本地文件记录
@@ -309,7 +376,8 @@ export function apply(ctx: Context, config: Config) {
           ...originalRecord,
           content: updatedContent,
           imageUrls: successfulImageUploads.length > 0 ? safeJsonStringify(successfulImageUploads) : originalRecord.imageUrls,
-          fileUrls: successfulFileUploads.length > 0 ? safeJsonStringify(successfulFileUploads) : originalRecord.fileUrls
+          fileUrls: successfulFileUploads.length > 0 ? safeJsonStringify(successfulFileUploads) : originalRecord.fileUrls,
+          videoUrls: successfulVideoUploads.length > 0 ? safeJsonStringify(successfulVideoUploads) : originalRecord.videoUrls
         })
       }
     } catch (error: any) {
@@ -341,7 +409,8 @@ export function apply(ctx: Context, config: Config) {
               ...lineRecord,
               content: record.content,
               imageUrls: safeJsonParse(record.imageUrls, []),
-              fileUrls: safeJsonParse(record.fileUrls, [])
+              fileUrls: safeJsonParse(record.fileUrls, []),
+              videoUrls: safeJsonParse(record.videoUrls, [])
             })
           }
           return line
@@ -665,10 +734,10 @@ export function apply(ctx: Context, config: Config) {
 
       const result = await dbOps.cleanupExpiredRecords(config.chatLog.dbRetentionHours)
       
-      const totalDeleted = result.deletedChatRecords + result.deletedImageRecords + result.deletedFileRecords
+      const totalDeleted = result.deletedChatRecords + result.deletedImageRecords + result.deletedFileRecords + result.deletedVideoRecords
       
       if (totalDeleted > 0) {
-        logger.info(`数据库清理完成: 删除 ${result.deletedChatRecords} 条聊天记录, ${result.deletedImageRecords} 条图片记录, ${result.deletedFileRecords} 条文件记录`)
+        logger.info(`数据库清理完成: 删除 ${result.deletedChatRecords} 条聊天记录, ${result.deletedImageRecords} 条图片记录, ${result.deletedFileRecords} 条文件记录, ${result.deletedVideoRecords} 条视频记录`)
       } else if (config.debug) {
         logger.info('数据库清理完成: 没有过期记录需要清理')
       }
@@ -758,20 +827,21 @@ export function apply(ctx: Context, config: Config) {
       let content = processed.content
       content = addReplyPrefix(content, session)
 
-      const record: Omit<ChatRecord, 'id'> = {
-        messageId,
-        guildId,
-        channelId,
-        userId,
-        username,
-        content,
-        originalElements: safeJsonStringify(session.elements),
-        timestamp,
-        messageType: processed.messageType,
-        imageUrls: processed.imageUrls.length > 0 ? safeJsonStringify(processed.imageUrls) : undefined,
-        fileUrls: processed.fileUrls.length > 0 ? safeJsonStringify(processed.fileUrls) : undefined,
-        isUploaded: false
-      }
+              const record: Omit<ChatRecord, 'id'> = {
+          messageId,
+          guildId,
+          channelId,
+          userId,
+          username,
+          content,
+          originalElements: safeJsonStringify(session.elements),
+          timestamp,
+          messageType: processed.messageType,
+          imageUrls: processed.imageUrls.length > 0 ? safeJsonStringify(processed.imageUrls) : undefined,
+          fileUrls: processed.fileUrls.length > 0 ? safeJsonStringify(processed.fileUrls) : undefined,
+          videoUrls: processed.videoUrls.length > 0 ? safeJsonStringify(processed.videoUrls) : undefined,
+          isUploaded: false
+        }
 
       // 保存到数据库
       await dbOps.createChatRecord(record)
@@ -779,9 +849,9 @@ export function apply(ctx: Context, config: Config) {
       // 保存到本地文件
       await saveMessageToLocalFile(record)
 
-      // 异步处理图片和文件上传
-      if (processed.imageUrls.length > 0 || processed.fileUrls.length > 0) {
-        processFileUploadsAsync(processed.imageUrls, processed.fileUrls, messageId, guildId, record)
+      // 异步处理图片、文件和视频上传
+      if (processed.imageUrls.length > 0 || processed.fileUrls.length > 0 || processed.videoUrls.length > 0) {
+        processFileUploadsAsync(processed.imageUrls, processed.fileUrls, processed.videoUrls, messageId, guildId, record)
       }
 
       // 简化非调试模式的消息处理日志
