@@ -1,7 +1,11 @@
 {
   "name": "koishi-plugin-chat-summarizer",
   "description": "Koishi聊天记录收集和上传插件",
+<<<<<<< HEAD
   "version": "1.4.1",
+=======
+  "version": "1.4.0",
+>>>>>>> 4c60955eb430c07e8b866ef43c3f7cf545d5aca6
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
