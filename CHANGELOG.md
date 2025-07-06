@@ -1,3 +1,12 @@
+## [1.3.0](https://github.com/WittF/chat-summarizer/compare/v1.2.0...v1.3.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **ai:** 添加AI总结功能，支持聊天记录导出时生成AI总结并可选择以图片形式发送 ([3a4a999](https://github.com/WittF/chat-summarizer/commit/3a4a999240356505a7685c5edb9a6ca80ac62115))
+* **database:** 添加视频记录支持，扩展数据库模型以存储视频信息并实现视频上传功能 ([bc0879a](https://github.com/WittF/chat-summarizer/commit/bc0879a2fcb575ae1d80deb093ebcdeac6da63d1))
+* **export:** 优化导出功能，添加简化时间格式和URL替换 ([f820700](https://github.com/WittF/chat-summarizer/commit/f82070083e50b247e07f37f70880a398d30abfce))
+* **reply:** 修改addReplyPrefix函数为异步，支持从数据库获取已处理的回复内容 ([4d29fc6](https://github.com/WittF/chat-summarizer/commit/4d29fc693c0fb0677241614e26105de01955a2a8))
+
 ## [1.2.0](https://github.com/WittF/chat-summarizer/compare/v1.1.0...v1.2.0) (2025-07-06)
 
 ### ✨ 功能更新
