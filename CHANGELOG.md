@@ -1,3 +1,9 @@
+## [1.9.1](https://github.com/WittF/chat-summarizer/compare/v1.9.0...v1.9.1) (2025-07-06)
+
+### 🐛 Bug修复
+
+* 优化文件上传逻辑，增加并行上传和超时控制，增强emoji字体加载兼容性 ([c5610b5](https://github.com/WittF/chat-summarizer/commit/c5610b50501613a451bc2bc3fddee3cddc5b9c70))
+
 ## [1.9.0](https://github.com/WittF/chat-summarizer/compare/v1.8.2...v1.9.0) (2025-07-06)
 
 ### ✨ 功能更新
