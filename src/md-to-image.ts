@@ -14,8 +14,8 @@ export class MarkdownToImageService {
    */
   private getFontBase64(fontFileName: string): string {
     try {
-      // 使用更可靠的路径解析方式
-      const fontPath = join(process.cwd(), 'node_modules', 'chat-summarizer', 'lib', 'assets', 'fonts', fontFileName)
+      // 使用正确的包名路径
+      const fontPath = join(process.cwd(), 'node_modules', 'koishi-plugin-chat-summarizer', 'lib', 'assets', 'fonts', fontFileName)
       this.logger.debug(`尝试读取字体文件: ${fontPath}`)
       
       const fontBuffer = readFileSync(fontPath)
@@ -106,7 +106,7 @@ export class MarkdownToImageService {
         font-weight: normal;
         font-style: normal;
         font-display: fallback;
-        unicode-range: U+1F000-1F9FF, U+2600-27BF, U+1F600-1F64F, U+1F300-1F5FF, U+1F680-1F6FF, U+1F700-1F77F, U+1F780-1F7FF, U+1F800-1F8FF, U+1F900-1F9FF, U+1FA00-1FA6F, U+1FA70-1FAFF, U+2700-27BF;
+        unicode-range: U+1F300-1F5FF, U+1F600-1F64F, U+1F680-1F6FF, U+1F700-1F77F, U+1F780-1F7FF, U+1F800-1F8FF, U+1F900-1F9FF, U+1FA00-1FA6F, U+1FA70-1FAFF, U+2600-26FF, U+2700-27BF, U+FE00-FE0F, U+1F000-1F02F, U+1F0A0-1F0FF, U+1F100-1F64F, U+1F910-1F96B, U+1F980-1F997, U+1F9C0-1F9C2, U+1F9D0-1F9FF;
       }` : ''}
       
       ${notoSansCJKscRegular ? `
@@ -177,11 +177,7 @@ export class MarkdownToImageService {
             font-family: 'Consolas', 'Monaco', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', 'Courier New', monospace, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei';
           }
           
-          /* emoji专用字体配置 - 多层fallback */
-          .emoji,
-          .ai-summary-title {
-            font-family: 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif;
-          }
+
           
           h1 {
             color: #1f2328;
@@ -278,17 +274,23 @@ export class MarkdownToImageService {
           if (fontCheckResults.NotoColorEmoji) {
             this.logger.info('✅ Emoji字体加载成功')
           } else {
-            this.logger.warn('❌ Emoji字体加载失败，启用系统字体fallback')
-            
-            // 注入emoji fallback CSS
-            await page.addStyleTag({
-              content: `
-                .emoji, .ai-summary-title {
-                  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
-                }
-              `
-            })
+            this.logger.warn('❌ Emoji字体加载失败，将使用系统emoji字体')
           }
+          
+          // 全局字体设置 - 确保所有文字包括emoji都使用正确字体
+          await page.addStyleTag({
+            content: `
+              /* 全局emoji字体设置 - 简单有效 */
+              * {
+                font-family: 'Inter', 'NotoSansCJKsc', 'NotoColorEmoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;
+              }
+              
+              /* 确保emoji优先使用emoji字体 */
+              body, .markdown-body, .markdown-body * {
+                font-variant-emoji: emoji !important;
+              }
+            `
+          })
           
           if (fontCheckResults.NotoSansCJKsc) {
             this.logger.info('✅ 中文字体加载成功')
@@ -302,11 +304,11 @@ export class MarkdownToImageService {
           // 出错时的完整fallback策略
           await page.addStyleTag({
             content: `
-              body, .markdown-body, .markdown-body * {
+              * {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'Liberation Sans', sans-serif, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji' !important;
               }
-              .emoji, .ai-summary-title {
-                font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Android Emoji', 'EmojiSymbols', 'EmojiOne Mozilla', 'Twemoji Mozilla', 'Segoe UI Symbol', sans-serif !important;
+              body, .markdown-body, .markdown-body * {
+                font-variant-emoji: emoji !important;
               }
             `
           })
@@ -314,6 +316,41 @@ export class MarkdownToImageService {
         
         // 额外等待确保字体加载完成
         await new Promise(resolve => setTimeout(resolve, 1200))
+        
+        // 测试emoji渲染情况
+        try {
+          const emojiTest = await page.evaluate(() => {
+            // 在页面中创建测试元素
+            const testDiv = document.createElement('div')
+            testDiv.innerHTML = '🤖'
+            testDiv.style.fontFamily = '"NotoColorEmoji", "Apple Color Emoji", "Segoe UI Emoji"'
+            testDiv.style.fontSize = '16px'
+            document.body.appendChild(testDiv)
+            
+            // 检查渲染的文字宽度来判断是否使用了emoji字体
+            const style = window.getComputedStyle(testDiv)
+            const result = {
+              fontFamily: style.fontFamily,
+              width: testDiv.offsetWidth,
+              height: testDiv.offsetHeight,
+              text: testDiv.textContent
+            }
+            
+            document.body.removeChild(testDiv)
+            return result
+          })
+          
+          this.logger.info('Emoji渲染测试结果:', emojiTest)
+          
+          if (emojiTest.width > 10) {
+            this.logger.info('✅ Emoji渲染正常')
+          } else {
+            this.logger.warn('❌ Emoji可能渲染为方块或空白')
+          }
+          
+        } catch (testError) {
+          this.logger.warn('Emoji渲染测试失败', testError)
+        }
         
         // 获取内容区域并截图
         const element = await page.$('.markdown-body')
@@ -400,7 +437,6 @@ export class MarkdownToImageService {
       .replace(/<p><\/p>/g, '')
       .replace(/<p>(<[^>]+>)<\/p>/g, '$1')
 
-    // 为emoji添加特殊class
-    return result.replace(/([\u{1F000}-\u{1F9FF}]|[\u{2600}-\u{27BF}]|🤖)/gu, '<span class="emoji">$1</span>')
+    return result
   }
 } 
