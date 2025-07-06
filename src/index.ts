@@ -12,7 +12,8 @@ import {
   getDateStringInUTC8, 
   getCurrentTimeInUTC8,
   safeJsonParse,
-  safeJsonStringify
+  safeJsonStringify,
+  replaceImageUrl
 } from './utils'
 
 export { name, inject }
@@ -106,17 +107,6 @@ export function apply(ctx: Context, config: Config) {
     
     return replyPrefix + content
   }
-
-  // URL替换函数
-  const replaceImageUrl = (originalUrl: string): string => {
-    // 替换域名
-    if (originalUrl.includes(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN)) {
-      return originalUrl.replace(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN, CONSTANTS.URL_REPLACEMENTS.NEW_DOMAIN)
-    }
-    return originalUrl
-  }
-
-
 
   // 保存消息到本地文件
   const saveMessageToLocalFile = async (record: ChatRecord): Promise<void> => {

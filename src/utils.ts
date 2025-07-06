@@ -2,10 +2,29 @@
  * 公共工具函数模块
  */
 
+import { CONSTANTS } from './config'
+
 /**
  * 将时间戳格式化为 UTC+8 可读时间
  */
 export const formatDateInUTC8 = (timestamp: number): string => {
+  const date = new Date(timestamp)
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  })
+}
+
+/**
+ * 将时间戳格式化为简化格式（不包含毫秒）
+ */
+export const formatDateSimple = (timestamp: number): string => {
   const date = new Date(timestamp)
   return date.toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -138,4 +157,15 @@ export const processBatch = async <T, R>(
   }
   
   return results
+}
+
+/**
+ * 替换URL中的域名
+ */
+export const replaceImageUrl = (originalUrl: string): string => {
+  // 替换域名
+  if (originalUrl.includes(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN)) {
+    return originalUrl.replace(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN, CONSTANTS.URL_REPLACEMENTS.NEW_DOMAIN)
+  }
+  return originalUrl
 } 

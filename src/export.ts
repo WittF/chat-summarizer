@@ -2,7 +2,7 @@ import { Context } from 'koishi'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { S3Uploader } from './s3-uploader'
-import { safeJsonParse, getDateStringInUTC8, formatDateInUTC8 } from './utils'
+import { safeJsonParse, getDateStringInUTC8, formatDateInUTC8, replaceImageUrl, formatDateSimple } from './utils'
 
 export interface ExportRequest {
   guildId?: string       // 群组ID，undefined表示私聊
@@ -275,9 +275,11 @@ export class ExportManager {
 
     switch (format) {
       case 'txt':
-        return messages.map(msg => 
-          `${msg.time} ${msg.username}: ${msg.content}`
-        ).join('\n')
+        return messages.map(msg => {
+          // 简化TXT格式：使用简化时间格式，去除消息种类信息
+          const time = formatDateSimple(new Date(msg.time).getTime())
+          return `${time} ${msg.username}: ${msg.content}`
+        }).join('\n')
         
       case 'csv':
         const csvHeader = 'Time,Username,Content\n'
@@ -387,9 +389,12 @@ export class ExportManager {
         await this.cleanupTempFiles(downloadedFiles)
         
         if (result.success) {
+          // 应用URL替换
+          const finalUrl = replaceImageUrl(result.url)
+          
           return {
             success: true,
-            s3Url: result.url,
+            s3Url: finalUrl,
             message: `✅ 导出成功！\n\n` +
                      `📊 消息数量: ${messages.length} 条\n` +
                      `📅 时间范围: ${timeRange.dateStrings.join(', ')}\n` +
