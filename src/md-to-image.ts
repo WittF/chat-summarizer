@@ -75,12 +75,12 @@ export class MarkdownToImageService {
       } catch (altError) {
         this.logger.warn(`备用路径也无法读取字体文件 ${fontFileName}`, altError)
         
-        // 如果缺少NotoSansCJKsc-Regular.otf，尝试使用Bold版本
-        if (fontFileName === 'NotoSansCJKsc-Regular.otf') {
+      // 如果缺少NotoSansCJKsc-Regular.otf，尝试使用Bold版本
+      if (fontFileName === 'NotoSansCJKsc-Regular.otf') {
           this.logger.info('尝试使用NotoSansCJKsc-Bold.otf作为fallback')
-          return this.getFontBase64('NotoSansCJKsc-Bold.otf')
-        }
-        return ''
+        return this.getFontBase64('NotoSansCJKsc-Bold.otf')
+      }
+      return ''
       }
     }
   }
@@ -152,8 +152,8 @@ export class MarkdownToImageService {
    * 将文本中的emoji转换为图片标签
    */
   private convertEmojiToImages(html: string): string {
-    // 使用jsDelivr CDN中国加速
-    const emojiBaseUrl = 'https://fastly.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/'
+    // 使用本地emoji图片
+    const emojiBaseUrl = 'file://' + join(process.cwd(), 'node_modules', 'koishi-plugin-chat-summarizer', 'lib', 'assets', 'emojis') + '/'
     
     // 常见emoji映射表
     const emojiMap: { [key: string]: string } = {
@@ -700,13 +700,49 @@ export class MarkdownToImageService {
       '🏳️‍⚧️': '1f3f3-fe0f-200d-26a7-fe0f'
     }
     
-    this.logger.info(`正在转换emoji到图片，支持${Object.keys(emojiMap).length}个emoji`)
+    // 过滤出本地存在的emoji文件
+    const localEmojiPath = join(process.cwd(), 'node_modules', 'koishi-plugin-chat-summarizer', 'lib', 'assets', 'emojis')
+    const altEmojiPath = join(__dirname, 'assets', 'emojis')
+    const availableEmojis: { [key: string]: { unicode: string; useAltPath: boolean } } = {}
+    let availableCount = 0
+    
+    for (const [emoji, unicode] of Object.entries(emojiMap)) {
+      try {
+        let emojiFilePath = join(localEmojiPath, `${unicode}.png`)
+        let useAltPath = false
+        
+        // 检查主路径
+        if (!require('fs').existsSync(emojiFilePath)) {
+          // 检查备用路径
+          emojiFilePath = join(altEmojiPath, `${unicode}.png`)
+          if (require('fs').existsSync(emojiFilePath)) {
+            useAltPath = true
+          } else {
+            continue // 两个路径都不存在，跳过这个emoji
+          }
+        }
+        
+        availableEmojis[emoji] = {
+          unicode,
+          useAltPath
+        }
+        availableCount++
+      } catch (error) {
+        // 忽略文件检查错误
+      }
+    }
+    
+    this.logger.info(`正在转换emoji到图片，本地可用${availableCount}个emoji（总计${Object.keys(emojiMap).length}个）`)
     
     // 替换emoji为图片标签
     let result = html
-    for (const [emoji, unicode] of Object.entries(emojiMap)) {
-      const imgTag = `<img class="emoji" src="${emojiBaseUrl}${unicode}.png" alt="${emoji}" loading="eager">`
-      result = result.replace(new RegExp(emoji, 'g'), imgTag)
+    for (const [emoji, emojiInfo] of Object.entries(availableEmojis)) {
+      const { unicode, useAltPath } = emojiInfo
+      const basePath = useAltPath ? 
+        'file://' + join(__dirname, 'assets', 'emojis') + '/' :
+        emojiBaseUrl
+      const imgTag = `<img class="emoji" src="${basePath}${unicode}.png" alt="${emoji}" loading="eager">`
+      result = result.replace(new RegExp(emoji.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), imgTag)
     }
     
     return result
