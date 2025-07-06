@@ -50,34 +50,3 @@
    cs.status
    ```
 
-## 🛠️ 开发
-
-### 构建
-
-```bash
-npm run build
-```
-
-### 发布
-
-本项目使用 [semantic-release](https://github.com/semantic-release/semantic-release) 自动化发布。
-
-提交消息格式：
-- `feat:` 新功能
-- `fix:` 修复
-- `refactor:` 重构
-- `docs:` 文档
-- `style:` 样式
-- `perf:` 性能优化
-
-## 📄 许可证
-
-[MIT](./LICENSE) © 2025
-
-## 🔗 相关链接
-
-- [Koishi 官方文档](https://koishi.chat/)
-- [Semantic Release](https://github.com/semantic-release/semantic-release)
-- [AWS S3 文档](https://docs.aws.amazon.com/s3/)
-
-
