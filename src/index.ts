@@ -318,11 +318,20 @@ export function apply(ctx: Context, config: Config) {
       const successfulFileUploads: string[] = []
       const successfulVideoUploads: string[] = []
 
-      // 处理图片上传
+      // 处理图片上传（添加超时控制）
       if (imageUrls.length > 0) {
-        const imageUploadPromises = imageUrls.map(imageUrl => 
-          uploadImageToS3(imageUrl, messageId, guildId)
-        )
+        const imageUploadPromises = imageUrls.map(imageUrl => {
+          // 🔑 关键修复：为每个上传添加超时控制
+          const uploadPromise = uploadImageToS3(imageUrl, messageId, guildId)
+          const timeoutPromise = new Promise<string | null>((resolve) => {
+            setTimeout(() => {
+              logger.warn(`图片上传超时: ${imageUrl}`)
+              resolve(null)
+            }, 120000) // 2分钟超时
+          })
+          
+          return Promise.race([uploadPromise, timeoutPromise])
+        })
         
         const imageUploadResults = await Promise.allSettled(imageUploadPromises)
         
@@ -334,11 +343,20 @@ export function apply(ctx: Context, config: Config) {
         })
       }
 
-      // 处理文件上传
+      // 处理文件上传（添加超时控制）
       if (fileUrls.length > 0) {
-        const fileUploadPromises = fileUrls.map(fileInfo => 
-          uploadFileToS3(fileInfo.url, fileInfo.fileName, messageId, guildId)
-        )
+        const fileUploadPromises = fileUrls.map(fileInfo => {
+          // 🔑 关键修复：为每个上传添加超时控制
+          const uploadPromise = uploadFileToS3(fileInfo.url, fileInfo.fileName, messageId, guildId)
+          const timeoutPromise = new Promise<string | null>((resolve) => {
+            setTimeout(() => {
+              logger.warn(`文件上传超时: ${fileInfo.fileName}`)
+              resolve(null)
+            }, 180000) // 3分钟超时，文件可能更大
+          })
+          
+          return Promise.race([uploadPromise, timeoutPromise])
+        })
         
         const fileUploadResults = await Promise.allSettled(fileUploadPromises)
         
@@ -350,11 +368,20 @@ export function apply(ctx: Context, config: Config) {
         })
       }
 
-      // 处理视频上传
+      // 处理视频上传（添加超时控制）
       if (videoUrls.length > 0) {
-        const videoUploadPromises = videoUrls.map(videoInfo => 
-          uploadVideoToS3(videoInfo.url, videoInfo.fileName, messageId, guildId)
-        )
+        const videoUploadPromises = videoUrls.map(videoInfo => {
+          // 🔑 关键修复：为每个上传添加超时控制
+          const uploadPromise = uploadVideoToS3(videoInfo.url, videoInfo.fileName, messageId, guildId)
+          const timeoutPromise = new Promise<string | null>((resolve) => {
+            setTimeout(() => {
+              logger.warn(`视频上传超时: ${videoInfo.fileName}`)
+              resolve(null)
+            }, 300000) // 5分钟超时，视频文件通常更大
+          })
+          
+          return Promise.race([uploadPromise, timeoutPromise])
+        })
         
         const videoUploadResults = await Promise.allSettled(videoUploadPromises)
         
@@ -879,9 +906,14 @@ export function apply(ctx: Context, config: Config) {
       // 保存到本地文件
       await saveMessageToLocalFile(record)
 
-      // 异步处理图片、文件和视频上传
+      // 异步处理图片、文件和视频上传（不等待，避免阻塞消息处理）
       if (processed.imageUrls.length > 0 || processed.fileUrls.length > 0 || processed.videoUrls.length > 0) {
-        processFileUploadsAsync(processed.imageUrls, processed.fileUrls, processed.videoUrls, messageId, guildId, record)
+        // 🔑 关键修复：使用 Promise.resolve().then() 确保不阻塞，并捕获错误
+        Promise.resolve().then(() => 
+          processFileUploadsAsync(processed.imageUrls, processed.fileUrls, processed.videoUrls, messageId, guildId, record)
+        ).catch(error => {
+          logger.error('异步文件上传处理失败', error)
+        })
       }
 
       // 简化非调试模式的消息处理日志

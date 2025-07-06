@@ -35,6 +35,12 @@ export class S3Uploader {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
       },
+      // 🔑 关键修复：在S3Client层面设置超时，避免底层网络操作卡住
+      requestHandler: {
+        requestTimeout: 120000, // 2分钟请求超时
+        connectionTimeout: 30000, // 30秒连接超时
+      },
+      maxAttempts: 3, // 最多重试3次
     }
 
     if (config.endpoint) {
@@ -74,15 +80,57 @@ export class S3Uploader {
         },
       })
 
-      await upload.done()
+      // 🔑 关键修复：强制超时控制，使用多重保护机制
+      const uploadPromise = upload.done()
+      
+      let timeoutId: NodeJS.Timeout | null = null
+      let isCompleted = false
+      
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          if (!isCompleted) {
+            isCompleted = true
+            
+            // 1. 强制取消上传操作
+            upload.abort().catch(() => {
+              // 忽略取消失败的错误
+            })
+            
+            // 2. 强制抛出错误
+            reject(new Error('S3上传超时（90秒）'))
+          }
+        }, 90000) // 90秒超时
+      })
+      
+      try {
+        const result = await Promise.race([uploadPromise, timeoutPromise])
+        isCompleted = true
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
+        
+        const url = this.generatePublicUrl(fullKey)
 
-      const url = this.generatePublicUrl(fullKey)
-
-      return {
-        success: true,
-        url,
-        key: fullKey,
-        fileSize: buffer.length
+        return {
+          success: true,
+          url,
+          key: fullKey,
+          fileSize: buffer.length
+        }
+      } catch (error: any) {
+        isCompleted = true
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
+        
+        // 确保上传操作被取消
+        try {
+          await upload.abort()
+        } catch {
+          // 忽略取消失败的错误
+        }
+        
+        throw error
       }
     } catch (error: any) {
       return {
