@@ -60,6 +60,12 @@ export const ConfigSchema: Schema<Config> = Schema.object({
       .default(true)
   }).description('监控配置'),
   
+  admin: Schema.object({
+    adminIds: Schema.array(Schema.string())
+      .description('管理员QQ号列表（可以使用cs.geturl命令）')
+      .default([])
+  }).description('管理员配置'),
+  
   debug: Schema.boolean()
     .description('是否启用调试模式')
     .default(false)
