@@ -1,3 +1,9 @@
+## [1.5.0](https://github.com/WittF/chat-summarizer/compare/v1.4.1...v1.5.0) (2025-07-06)
+
+### ✨ 功能更新
+
+* **md-to-image:** 增加对Noto Color Emoji字体的支持，并优化字体加载逻辑 ([9923f62](https://github.com/WittF/chat-summarizer/commit/9923f62843c5b31da491696ba1f8329600ff39d0))
+
 ## [1.4.1](https://github.com/WittF/chat-summarizer/compare/v1.4.0...v1.4.1) (2025-07-06)
 
 ### 🐛 Bug修复
