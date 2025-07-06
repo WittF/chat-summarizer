@@ -1,3 +1,9 @@
+## [1.4.1](https://github.com/WittF/chat-summarizer/compare/v1.4.0...v1.4.1) (2025-07-06)
+
+### 🐛 Bug修复
+
+* 触发1.4.1版本发布 ([555308b](https://github.com/WittF/chat-summarizer/commit/555308ba720ab67f95ca79a80a51b6e99b206929))
+
 ## [1.4.0](https://github.com/WittF/chat-summarizer/compare/v1.3.0...v1.4.0) (2025-07-06)
 
 ### ✨ 功能更新
