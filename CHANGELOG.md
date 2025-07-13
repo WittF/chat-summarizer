@@ -1,3 +1,9 @@
+## [1.13.6](https://github.com/WittF/chat-summarizer/compare/v1.13.5...v1.13.6) (2025-07-13)
+
+### 🐛 Bug修复
+
+* **export:** 完全重写文件处理逻辑，优化数据源选择，优先使用本地文件并减少S3调用次数 ([b1549d2](https://github.com/WittF/chat-summarizer/commit/b1549d293cc7749eebec6dda326a616a97217a14))
+
 ## [1.13.5](https://github.com/WittF/chat-summarizer/compare/v1.13.4...v1.13.5) (2025-07-13)
 
 ### 🐛 Bug修复
