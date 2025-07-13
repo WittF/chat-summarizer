@@ -326,75 +326,91 @@ export class ExportManager {
       // 解析时间范围
       const timeRange = this.parseTimeRange(request.timeRange)
       
-      // 检查本地文件
-      const localFiles = await this.checkLocalFiles(request.guildId, timeRange.dateStrings)
+      // 🔑 完全重写：为每个日期选择唯一的数据源，优先本地文件
+      const groupKey = request.guildId || 'private'
+      const filesToProcess: string[] = []
+      const s3FilesToDownload: string[] = []
+      const missingDates: string[] = []
+      let localFileCount = 0
+      let s3FileCount = 0
       
-      // 检查S3文件
-      const s3Files = await this.checkS3Files(request.guildId, timeRange.dateStrings)
+      // 🔑 性能优化：只调用一次S3 listFiles
+      let s3FilesList: string[] = []
+      if (this.s3Uploader) {
+        const s3Result = await this.s3Uploader.listFiles('chat-logs/')
+        if (s3Result.success && s3Result.files) {
+          s3FilesList = s3Result.files
+        }
+      }
+      
+      // 对每个日期，按优先级选择数据源：本地 > S3
+      for (const dateStr of timeRange.dateStrings) {
+        // 1. 优先检查本地文件
+        const localFileName = `${groupKey}_${dateStr}.jsonl`
+        const localFilePath = path.join(this.getStorageDir('data'), localFileName)
+        
+        try {
+          const stats = await fs.stat(localFilePath)
+          // 检查文件存在且不为空
+          if (stats.size > 0) {
+            // 本地文件存在且有内容，使用本地文件
+            filesToProcess.push(localFilePath)
+            localFileCount++
+            continue
+          }
+          // 文件为空，继续检查S3
+        } catch {
+          // 本地文件不存在，检查S3
+        }
+        
+        // 2. 检查S3文件（使用已获取的文件列表）
+        if (s3FilesList.length > 0) {
+          const s3File = s3FilesList.find(file => {
+            const pattern = request.guildId 
+              ? new RegExp(`chat-logs/${dateStr}/guild_${request.guildId}_\\d+\\.json$`)
+              : new RegExp(`chat-logs/${dateStr}/private_\\d+\\.json$`)
+            return pattern.test(file)
+          })
+          
+          if (s3File) {
+            // S3文件存在，标记为需要下载
+            s3FilesToDownload.push(s3File)
+            s3FileCount++
+            continue
+          }
+        }
+        
+        // 3. 本地和S3都没有，记录为缺失
+        missingDates.push(dateStr)
+      }
       
       // 检查数据完整性
-      const totalDays = timeRange.dateStrings.length
-      const availableDays = localFiles.length + s3Files.length
+      if (missingDates.length > 0) {
+        const groupText = request.guildId ? `群组 ${request.guildId}` : '私聊'
+        return {
+          success: false,
+          error: `❌ 数据不完整，拒绝部分导出\n\n` +
+                 `📅 缺失日期: ${missingDates.join(', ')}\n` +
+                 `💾 本地文件: ${localFileCount} 个\n` +
+                 `☁️ S3文件: ${s3FileCount} 个\n\n` +
+                 `请确保所有日期的数据都可用后再尝试导出。`
+        }
+      }
       
-      if (availableDays === 0) {
+      if (localFileCount === 0 && s3FileCount === 0) {
         const groupText = request.guildId ? `群组 ${request.guildId}` : '私聊'
         return {
           success: false,
           error: `❌ 未找到 ${groupText} 在指定时间范围内的聊天记录\n\n` +
-                 `📅 请求时间: ${timeRange.dateStrings.join(', ')}\n` +
-                 `💾 本地文件: 0 个\n` +
-                 `☁️ S3文件: 0 个`
+                 `📅 请求时间: ${timeRange.dateStrings.join(', ')}`
         }
       }
       
-      if (availableDays < totalDays) {
-        const missingDays = timeRange.dateStrings.filter(date => {
-          const checkGroupKey = request.guildId || 'private'
-          const localExists = localFiles.some(f => f.includes(`${checkGroupKey}_${date}.jsonl`))
-          const s3Exists = s3Files.some(f => f.includes(date))
-          return !localExists && !s3Exists
-        })
-        
-        return {
-          success: false,
-          error: `❌ 数据不完整，拒绝部分导出\n\n` +
-                 `📅 缺失日期: ${missingDays.join(', ')}\n` +
-                 `💾 本地文件: ${localFiles.length} 个\n` +
-                 `☁️ S3文件: ${s3Files.length} 个\n\n` +
-                 `请确保所有日期的数据都可用后再尝试导出。`
-        }
-      }
-
-      // 🔑 关键修复：避免重复处理同一份数据
-      // 优先使用本地文件，只下载本地不存在的S3文件
-      const localDateStrings = new Set<string>()
-      
-      // 从本地文件名提取已有的日期
-      const currentGroupKey = request.guildId || 'private'
-      localFiles.forEach(filePath => {
-        const fileName = path.basename(filePath)
-        // 文件名格式：groupKey_dateStr.jsonl
-        const match = fileName.match(new RegExp(`^${currentGroupKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_(.+)\\.jsonl$`))
-        if (match) {
-          localDateStrings.add(match[1])
-        }
-      })
-      
-      // 只下载本地不存在的S3文件
-      const s3FilesToDownload = s3Files.filter(s3File => {
-        // 从S3文件路径提取日期
-        const s3DateMatch = s3File.match(/chat-logs\/(\d{4}-\d{2}-\d{2})\//)
-        if (s3DateMatch) {
-          const s3Date = s3DateMatch[1]
-          return !localDateStrings.has(s3Date) // 只下载本地没有的
-        }
-        return false
-      })
-      
+      // 下载S3文件（如果有的话）
       const downloadedFiles = s3FilesToDownload.length > 0 ? await this.downloadFromS3(s3FilesToDownload) : []
       
       // 解析所有消息，应用消息类型过滤
-      const allFiles = [...localFiles, ...downloadedFiles]
+      const allFiles = [...filesToProcess, ...downloadedFiles]
       const messages = await this.parseMessageFiles(allFiles, request.messageTypes)
       
       if (messages.length === 0) {
@@ -446,7 +462,7 @@ export class ExportManager {
                      `📅 时间范围: ${timeRange.dateStrings.join(', ')}\n` +
                      `📄 格式: ${request.format.toUpperCase()}\n` +
                      typeInfo +
-                     `💾 数据来源: ${localFiles.length} 个本地文件 + ${s3Files.length} 个S3文件`
+                     `💾 数据来源: ${localFileCount} 个本地文件 + ${s3FileCount} 个S3文件`
           }
         } else {
           return {
