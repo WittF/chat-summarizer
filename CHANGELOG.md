@@ -1,3 +1,9 @@
+## [1.13.4](https://github.com/WittF/chat-summarizer/compare/v1.13.3...v1.13.4) (2025-07-13)
+
+### 🐛 Bug修复
+
+* **md-to-image:** 更新emoji图片源为BootCDN，以提高国内访问稳定性 ([c4944fe](https://github.com/WittF/chat-summarizer/commit/c4944fe5aeced409387ad0693a98a27a81dc85e3))
+
 ## [1.13.3](https://github.com/WittF/chat-summarizer/compare/v1.13.2...v1.13.3) (2025-07-06)
 
 ### 🐛 Bug修复
