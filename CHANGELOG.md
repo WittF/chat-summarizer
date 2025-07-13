@@ -1,3 +1,9 @@
+## [1.13.3](https://github.com/WittF/chat-summarizer/compare/v1.13.2...v1.13.3) (2025-07-06)
+
+### 🐛 Bug修复
+
+* **ai-service:** 修复群组配置匹配逻辑，确保每个群使用各自的专用prompt配置 ([3a3265d](https://github.com/WittF/chat-summarizer/commit/3a3265dc6d938f432be13d32efdb176052ebeb72))
+
 ## [1.13.2](https://github.com/WittF/chat-summarizer/compare/v1.13.1...v1.13.2) (2025-07-06)
 
 ### 🐛 Bug修复
