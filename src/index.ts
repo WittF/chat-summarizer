@@ -1,13 +1,15 @@
 import { Context, Session } from 'koishi'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { Config, ChatRecord, ImageRecord, FileRecord, VideoRecord } from './types'
+import { Config, ChatRecord, ImageRecord, FileRecord, VideoRecord, ChatLogFileRecord } from './types'
 import { name, inject, ConfigSchema, CONSTANTS } from './config'
 import { extendDatabase, DatabaseOperations } from './database'
 import { LoggerService, S3Service, MessageProcessorService } from './services'
 import { CommandHandler } from './commands'
 import { S3Uploader, UploadResult } from './s3-uploader'
 import { SafeFileWriter } from './file-writer'
+import { AIService } from './ai-service'
+import { MarkdownToImageService } from './md-to-image'
 import { 
   formatDateInUTC8, 
   getDateStringInUTC8, 
@@ -870,6 +872,189 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
+  // 执行自动AI总结生成
+  const executeAutoSummary = async (): Promise<void> => {
+    if (!config.ai.autoSummaryEnabled || !config.ai.enabled) {
+      if (config.debug) {
+        logger.info('自动总结功能已禁用，跳过执行')
+      }
+      return
+    }
+
+    const s3Uploader = s3Service.getUploader()
+    if (!s3Uploader) {
+      logger.error('S3上传器未初始化，无法执行自动总结')
+      return
+    }
+
+    try {
+      logger.info('开始执行自动AI总结生成')
+
+      // 获取昨天的日期字符串（基于UTC+8时区）
+      const yesterday = getCurrentTimeInUTC8()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const dateStr = getDateStringInUTC8(yesterday.getTime())
+
+      // 获取需要生成AI总结的聊天记录文件
+      const recordsToSummarize = await dbOps.getChatLogFilesForSummary(dateStr)
+
+      if (recordsToSummarize.length === 0) {
+        if (config.debug) {
+          logger.info(`没有找到需要生成AI总结的记录 (${dateStr})`)
+        }
+        return
+      }
+
+      logger.info(`发现 ${recordsToSummarize.length} 个文件需要生成AI总结`)
+
+      // 逐个处理每个群组的记录
+      for (const record of recordsToSummarize) {
+        try {
+          await generateSummaryForRecord(record)
+        } catch (error: any) {
+          logger.error(`为记录 ${record.id} 生成AI总结失败`, error)
+        }
+      }
+
+      logger.info('自动AI总结生成完成')
+
+    } catch (error: any) {
+      logger.error('执行自动AI总结时发生错误', error)
+    }
+  }
+
+  // 过滤聊天记录，只保留文本消息用于AI总结
+  const filterMessagesForSummary = async (jsonContent: string): Promise<string> => {
+    try {
+      const lines = jsonContent.split('\n').filter(line => line.trim())
+      const filteredMessages: any[] = []
+      
+      for (const line of lines) {
+        try {
+          const record = JSON.parse(line)
+          
+          // 只保留文本类型的消息
+          if (record.messageType === 'text' && record.content && record.content.trim()) {
+            filteredMessages.push({
+              time: record.time,
+              username: record.username,
+              content: record.content,
+              guildId: record.guildId,
+              messageType: record.messageType
+            })
+          }
+        } catch {
+          // 跳过解析失败的行
+        }
+      }
+      
+      // 转换为文本格式，类似于export命令的txt格式
+      const textContent = filteredMessages.map(msg => {
+        const time = msg.time.split(' ')[1] || msg.time // 只保留时间部分
+        return `${time} ${msg.username}: ${msg.content}`
+      }).join('\n')
+      
+      return textContent
+    } catch (error) {
+      logger.error('过滤聊天记录失败', error)
+      return jsonContent // 失败时返回原始内容
+    }
+  }
+
+  // 为单个记录生成AI总结
+  const generateSummaryForRecord = async (record: ChatLogFileRecord): Promise<void> => {
+    if (!record.s3Url) {
+      logger.warn(`记录 ${record.id} 没有S3 URL，跳过`)
+      return
+    }
+
+    const s3Uploader = s3Service.getUploader()
+    if (!s3Uploader) {
+      logger.error('S3上传器未初始化')
+      return
+    }
+
+    try {
+      const groupInfo = record.guildId ? `群组 ${record.guildId}` : '私聊'
+      logger.info(`正在为 ${groupInfo} 生成AI总结 (${record.date})`)
+
+             // 下载聊天记录内容
+       const response = await ctx.http.get(record.s3Url, {
+         timeout: 30000,
+         responseType: 'text'
+       })
+
+       if (!response) {
+         throw new Error('无法下载聊天记录文件')
+       }
+
+       // 解析聊天记录并过滤只保留文本消息
+       const filteredContent = await filterMessagesForSummary(response)
+
+       // 初始化AI服务和图片服务
+       const aiService = new AIService(ctx, config)
+       const mdToImageService = new MarkdownToImageService(ctx)
+
+       // 生成AI总结
+       const summary = await aiService.generateSummary(
+         filteredContent,
+         'yesterday',
+         record.recordCount,
+         record.guildId || 'private'
+       )
+
+      // 生成总结图片
+      const imageBuffer = await mdToImageService.convertToImage(summary)
+
+      // 上传图片到S3
+      const imageKey = `summary-images/${record.date}/${record.guildId || 'private'}_${record.id}_${Date.now()}.png`
+      const uploadResult = await s3Uploader.uploadBuffer(imageBuffer, imageKey, 'image/png')
+
+      if (uploadResult.success && uploadResult.url) {
+        // 更新数据库记录
+        await dbOps.updateChatLogFileSummaryImage(record.id!, uploadResult.url)
+        
+        logger.info(`✅ ${groupInfo} AI总结生成成功: ${uploadResult.url}`)
+      } else {
+        throw new Error(`图片上传失败: ${uploadResult.error}`)
+      }
+
+    } catch (error: any) {
+      logger.error(`为记录 ${record.id} 生成AI总结失败`, error)
+      throw error
+    }
+  }
+
+  // 自动总结调度器
+  let summaryScheduler: NodeJS.Timeout | null = null
+
+  // 设置自动总结任务
+  const scheduleAutoSummary = (): void => {
+    if (!config.ai.autoSummaryEnabled || !config.ai.autoSummaryTime) {
+      if (config.debug) {
+        logger.info('自动总结功能未启用，跳过调度')
+      }
+      return
+    }
+
+    if (summaryScheduler) {
+      clearTimeout(summaryScheduler)
+    }
+
+    const nextExecution = getNextExecutionTime(config.ai.autoSummaryTime)
+    const delay = nextExecution.getTime() - Date.now()
+
+    if (config.debug) {
+      logger.info(`下次自动AI总结时间: ${nextExecution.toLocaleString('zh-CN')}`)
+    }
+
+    summaryScheduler = setTimeout(async () => {
+      await executeAutoSummary()
+      // 设置下一次执行
+      scheduleAutoSummary()
+    }, delay)
+  }
+
   // 初始化插件
   const initializePlugin = async (): Promise<void> => {
     try {
@@ -899,12 +1084,23 @@ export function apply(ctx: Context, config: Config) {
         setTimeout(() => executeDatabaseCleanup(), 5000) // 延迟5秒启动，避免启动时资源竞争
       }
       
+      // 启动自动AI总结任务
+      if (config.ai.enabled && config.ai.autoSummaryEnabled && s3Service.getUploader()) {
+        scheduleAutoSummary()
+      }
+      
       // 显示初始化状态
       if (config.debug) {
         logger.info('插件初始化完成 (调试模式已开启)')
         logger.info(`数据库记录保留时间: ${config.chatLog.dbRetentionHours} 小时`)
+        if (config.ai.autoSummaryEnabled) {
+          logger.info(`自动AI总结已启用，执行时间: ${config.ai.autoSummaryTime}`)
+        }
       } else {
         logger.info('插件初始化完成')
+        if (config.ai.autoSummaryEnabled) {
+          logger.info(`自动AI总结已启用，执行时间: ${config.ai.autoSummaryTime}`)
+        }
       }
       
     } catch (error: any) {
@@ -986,6 +1182,10 @@ export function apply(ctx: Context, config: Config) {
       clearInterval(cleanupScheduler)
       cleanupScheduler = null
     }
+    if (summaryScheduler) {
+      clearTimeout(summaryScheduler)
+      summaryScheduler = null
+    }
     
     // 等待所有文件写入操作完成并清理资源
     try {
@@ -996,6 +1196,6 @@ export function apply(ctx: Context, config: Config) {
       logger.error('等待文件写入完成时发生错误', error)
     }
     
-    logger.info('聊天记录插件已卸载，已清理所有定时任务')
+    logger.info('聊天记录插件已卸载，已清理所有定时任务（包括自动总结调度器）')
   })
 } 

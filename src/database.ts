@@ -72,7 +72,9 @@ export function extendDatabase(ctx: Context) {
     recordCount: 'unsigned',
     uploadedAt: 'unsigned',
     status: 'string',
-    error: 'text'
+    error: 'text',
+    summaryImageUrl: 'string',
+    summaryGeneratedAt: 'unsigned'
   }, {
     autoInc: true,
   })
@@ -134,6 +136,24 @@ export class DatabaseOperations {
       guildId
     })
     return records.length > 0 ? records[0] : null
+  }
+
+  // 更新AI总结图片URL
+  async updateChatLogFileSummaryImage(id: number, summaryImageUrl: string): Promise<void> {
+    await this.ctx.database.set('chat_log_files', { id }, {
+      summaryImageUrl,
+      summaryGeneratedAt: Date.now()
+    })
+  }
+
+  // 获取需要生成AI总结的聊天记录文件
+  async getChatLogFilesForSummary(date: string): Promise<ChatLogFileRecord[]> {
+    const records = await this.ctx.database.get('chat_log_files', {
+      date,
+      status: 'uploaded'
+    })
+    // 只返回还没有生成AI总结的记录
+    return records.filter(record => !record.summaryImageUrl)
   }
 
   // 更新聊天记录

@@ -147,7 +147,14 @@ export const ConfigSchema: Schema<Config> = Schema.object({
       .default(false),
     fileName: Schema.string()
       .description('文件模式下的文件名（仅用于提示，如：chat-log.txt）')
-      .default('chat-log.txt')
+      .default('chat-log.txt'),
+    autoSummaryEnabled: Schema.boolean()
+      .description('是否启用自动总结功能（每日自动生成AI总结缩略图）')
+      .default(false),
+    autoSummaryTime: Schema.string()
+      .description('自动总结时间（HH:mm格式，如：03:00）')
+      .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)
+      .default('03:00')
   }).description('AI总结配置'),
   
   debug: Schema.boolean()

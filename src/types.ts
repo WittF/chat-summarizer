@@ -51,6 +51,8 @@ export interface Config {
     userPromptTemplate?: string // 用户提示词模板（可选）
     useFileMode?: boolean   // 是否使用文件模式发送聊天记录（可选）
     fileName?: string       // 文件模式下的文件名（可选）
+    autoSummaryEnabled?: boolean // 是否启用自动总结功能（可选）
+    autoSummaryTime?: string // 自动总结时间（HH:mm格式，可选）
   }
   
   // 调试配置
@@ -124,6 +126,8 @@ export interface ChatLogFileRecord {
   uploadedAt: number      // 上传时间戳
   status: 'pending' | 'uploading' | 'uploaded' | 'failed'  // 上传状态
   error?: string          // 错误信息（如果失败）
+  summaryImageUrl?: string // AI总结缩略图URL（可选）
+  summaryGeneratedAt?: number // AI总结生成时间戳（可选）
 }
 
 // 插件统计信息
