@@ -349,8 +349,8 @@ export class ExportManager {
       
       if (availableDays < totalDays) {
         const missingDays = timeRange.dateStrings.filter(date => {
-          const groupKey = request.guildId || 'private'
-          const localExists = localFiles.some(f => f.includes(`${groupKey}_${date}.jsonl`))
+          const checkGroupKey = request.guildId || 'private'
+          const localExists = localFiles.some(f => f.includes(`${checkGroupKey}_${date}.jsonl`))
           const s3Exists = s3Files.some(f => f.includes(date))
           return !localExists && !s3Exists
         })
@@ -365,8 +365,33 @@ export class ExportManager {
         }
       }
 
-      // 从S3下载需要的文件
-      const downloadedFiles = s3Files.length > 0 ? await this.downloadFromS3(s3Files) : []
+      // 🔑 关键修复：避免重复处理同一份数据
+      // 优先使用本地文件，只下载本地不存在的S3文件
+      const localDateStrings = new Set<string>()
+      
+      // 从本地文件名提取已有的日期
+      const currentGroupKey = request.guildId || 'private'
+      localFiles.forEach(filePath => {
+        const fileName = path.basename(filePath)
+        // 文件名格式：groupKey_dateStr.jsonl
+        const match = fileName.match(new RegExp(`^${currentGroupKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_(.+)\\.jsonl$`))
+        if (match) {
+          localDateStrings.add(match[1])
+        }
+      })
+      
+      // 只下载本地不存在的S3文件
+      const s3FilesToDownload = s3Files.filter(s3File => {
+        // 从S3文件路径提取日期
+        const s3DateMatch = s3File.match(/chat-logs\/(\d{4}-\d{2}-\d{2})\//)
+        if (s3DateMatch) {
+          const s3Date = s3DateMatch[1]
+          return !localDateStrings.has(s3Date) // 只下载本地没有的
+        }
+        return false
+      })
+      
+      const downloadedFiles = s3FilesToDownload.length > 0 ? await this.downloadFromS3(s3FilesToDownload) : []
       
       // 解析所有消息，应用消息类型过滤
       const allFiles = [...localFiles, ...downloadedFiles]
@@ -386,12 +411,12 @@ export class ExportManager {
       const exportContent = this.formatExportContent(messages, request.format)
       
       // 生成导出文件名
-      const groupKey = request.guildId || 'private'
+      const exportGroupKey = request.guildId || 'private'
       const timeStr = request.timeRange.replace(/[,\s]/g, '_')
       const typeStr = request.messageTypes && request.messageTypes.length > 0 
         ? `_${request.messageTypes.join('-')}` 
         : ''
-      const exportFileName = `export_${groupKey}_${timeStr}${typeStr}_${Date.now()}.${request.format}`
+      const exportFileName = `export_${exportGroupKey}_${timeStr}${typeStr}_${Date.now()}.${request.format}`
       
       // 上传到S3
       if (this.s3Uploader) {
