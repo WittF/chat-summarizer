@@ -1,3 +1,9 @@
+## [1.13.5](https://github.com/WittF/chat-summarizer/compare/v1.13.4...v1.13.5) (2025-07-13)
+
+### 🐛 Bug修复
+
+* **export:** 优化文件下载逻辑，避免重复下载已存在的本地文件 ([16ce42d](https://github.com/WittF/chat-summarizer/commit/16ce42d53ee3a853518659e84312a2f485e399f7))
+
 ## [1.13.4](https://github.com/WittF/chat-summarizer/compare/v1.13.3...v1.13.4) (2025-07-13)
 
 ### 🐛 Bug修复
