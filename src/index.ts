@@ -327,7 +327,9 @@ export function apply(ctx: Context, config: Config) {
           const uploadPromise = uploadImageToS3(imageUrl, messageId, guildId)
           const timeoutPromise = new Promise<string | null>((resolve) => {
             setTimeout(() => {
-              logger.warn(`图片上传超时: ${imageUrl}`)
+              if (config.debug) {
+                logger.warn(`图片上传超时: ${imageUrl}`)
+              }
               resolve(null)
             }, 120000) // 2分钟超时
           })
@@ -352,7 +354,9 @@ export function apply(ctx: Context, config: Config) {
           const uploadPromise = uploadFileToS3(fileInfo.url, fileInfo.fileName, messageId, guildId)
           const timeoutPromise = new Promise<string | null>((resolve) => {
             setTimeout(() => {
-              logger.warn(`文件上传超时: ${fileInfo.fileName}`)
+              if (config.debug) {
+                logger.warn(`文件上传超时: ${fileInfo.fileName}`)
+              }
               resolve(null)
             }, 180000) // 3分钟超时，文件可能更大
           })
@@ -377,7 +381,9 @@ export function apply(ctx: Context, config: Config) {
           const uploadPromise = uploadVideoToS3(videoInfo.url, videoInfo.fileName, messageId, guildId)
           const timeoutPromise = new Promise<string | null>((resolve) => {
             setTimeout(() => {
-              logger.warn(`视频上传超时: ${videoInfo.fileName}`)
+              if (config.debug) {
+                logger.warn(`视频上传超时: ${videoInfo.fileName}`)
+              }
               resolve(null)
             }, 300000) // 5分钟超时，视频文件通常更大
           })
