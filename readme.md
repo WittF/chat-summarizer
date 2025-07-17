@@ -76,5 +76,5 @@
 4. **AI总结功能**：
    ```
    cs.export current yesterday txt --summarize # 导出昨天记录并生成AI总结
-   cs.export 123456789astweek json -t text -s # 今天的文本息并AI总结
+   cs.export 123456789 today json -t text -s # 导出今天的文本消息并AI总结
    cs.export 123456789 thismonth csv --summarize # 导出本月记录并AI总结
