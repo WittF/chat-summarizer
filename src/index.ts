@@ -501,20 +501,29 @@ export function apply(ctx: Context, config: Config) {
     try {
       // 根据保留天数配置决定是否删除文件
       if (config.chatLog.retentionDays > 0) {
+        // 获取文件的实际修改时间，而不是使用传入的uploadDate
+        const fileStats = await fs.stat(filePath).catch(() => null)
+        if (!fileStats) {
+          logger.warn(`无法获取文件状态，跳过清理: ${path.basename(filePath)}`)
+          return
+        }
+        
+        const fileModifiedTime = fileStats.mtime
         const retentionDate = getCurrentTimeInUTC8()
         retentionDate.setDate(retentionDate.getDate() - config.chatLog.retentionDays)
         
-        if (uploadDate <= retentionDate) {
+        if (fileModifiedTime <= retentionDate) {
           await fs.unlink(filePath)
           
           // 只在调试模式下记录详细信息
           if (config.debug) {
-            logger.info(`已删除过期文件: ${path.basename(filePath)} (保留${config.chatLog.retentionDays}天)`)
+            logger.info(`已删除过期文件: ${path.basename(filePath)} (保留${config.chatLog.retentionDays}天，文件修改时间: ${fileModifiedTime.toLocaleString('zh-CN')})`)
           }
         } else {
           // 只在调试模式下记录详细信息
           if (config.debug) {
-            logger.info(`保留文件: ${path.basename(filePath)} (还需保留${Math.ceil((uploadDate.getTime() - retentionDate.getTime()) / (1000 * 60 * 60 * 24))}天)`)
+            const remainingDays = Math.ceil((fileModifiedTime.getTime() - retentionDate.getTime()) / (1000 * 60 * 60 * 24))
+            logger.info(`保留文件: ${path.basename(filePath)} (还需保留${remainingDays}天，文件修改时间: ${fileModifiedTime.toLocaleString('zh-CN')})`)
           }
         }
       }
@@ -854,8 +863,68 @@ export function apply(ctx: Context, config: Config) {
         logger.info('数据库清理完成: 没有过期记录需要清理')
       }
 
+      // 执行独立的本地文件清理
+      await executeLocalFileCleanup()
+
     } catch (error: any) {
       logger.error('执行数据库清理时发生错误', error)
+    }
+  }
+
+  // 执行独立的本地文件清理
+  const executeLocalFileCleanup = async (): Promise<void> => {
+    try {
+      if (config.chatLog.retentionDays <= 0) {
+        return // 如果保留天数为0或负数，跳过文件清理
+      }
+
+      const dataDir = getStorageDir('data')
+      const files = await fs.readdir(dataDir).catch(() => [])
+      
+      if (files.length === 0) {
+        return
+      }
+
+      const retentionDate = getCurrentTimeInUTC8()
+      retentionDate.setDate(retentionDate.getDate() - config.chatLog.retentionDays)
+      
+      let deletedCount = 0
+      let checkedCount = 0
+
+      for (const fileName of files) {
+        if (!fileName.endsWith('.jsonl')) {
+          continue // 只处理.jsonl文件
+        }
+
+        const filePath = path.join(dataDir, fileName)
+        
+        try {
+          const fileStats = await fs.stat(filePath)
+          checkedCount++
+          
+          if (fileStats.mtime <= retentionDate) {
+            await fs.unlink(filePath)
+            deletedCount++
+            
+            if (config.debug) {
+              logger.info(`已清理过期本地文件: ${fileName} (修改时间: ${fileStats.mtime.toLocaleString('zh-CN')})`)
+            }
+          }
+        } catch (error: any) {
+          if (config.debug) {
+            logger.warn(`处理本地文件失败: ${fileName} - ${error.message}`)
+          }
+        }
+      }
+
+      if (deletedCount > 0) {
+        logger.info(`本地文件清理完成: 检查 ${checkedCount} 个文件, 删除 ${deletedCount} 个过期文件 (保留${config.chatLog.retentionDays}天)`)
+      } else if (config.debug) {
+        logger.info(`本地文件清理完成: 检查 ${checkedCount} 个文件, 无过期文件需要删除`)
+      }
+
+    } catch (error: any) {
+      logger.error('执行本地文件清理时发生错误', error)
     }
   }
 
