@@ -1,3 +1,9 @@
+## [1.14.0](https://github.com/WittF/chat-summarizer/compare/v1.13.6...v1.14.0) (2025-07-13)
+
+### ✨ 功能更新
+
+* **config:** 添加自动总结功能配置，更新数据库结构以支持AI总结，增加自动总结调度器 ([28cd353](https://github.com/WittF/chat-summarizer/commit/28cd353bac574821fbdd4e4de22e2331dcfec962))
+
 ## [1.13.6](https://github.com/WittF/chat-summarizer/compare/v1.13.5...v1.13.6) (2025-07-13)
 
 ### 🐛 Bug修复
