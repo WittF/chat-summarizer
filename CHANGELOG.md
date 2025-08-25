@@ -1,3 +1,14 @@
+## [1.16.0](https://github.com/WittF/chat-summarizer/compare/v1.15.0...v1.16.0) (2025-08-25)
+
+### ✨ 功能更新
+
+* **cleanup:** 优化本地文件清理功能，基于文件修改时间删除过期.jsonl文件 ([0652108](https://github.com/WittF/chat-summarizer/commit/0652108aaded9e1ef2875b709ab851389dae3c5f))
+* **commands:** 添加AI总结管理命令，支持检查缺失总结和重新生成总结功能 ([200f751](https://github.com/WittF/chat-summarizer/commit/200f75195cdd7083181f9ff8d303a175acfcc7fc))
+
+### 🐛 Bug修复
+
+* **readme:** 更新readme.md中的命令示例，修正导出今天文本消息的命令格式 ([e8ea37b](https://github.com/WittF/chat-summarizer/commit/e8ea37b42479132666941c4afad73b8ad6c05950))
+
 ## [1.15.0](https://github.com/WittF/chat-summarizer/compare/v1.14.0...v1.15.0) (2025-07-17)
 
 ### ✨ 功能更新
