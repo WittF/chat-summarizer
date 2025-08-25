@@ -1,3 +1,13 @@
+## [1.15.0](https://github.com/WittF/chat-summarizer/compare/v1.14.0...v1.15.0) (2025-07-17)
+
+### ✨ 功能更新
+
+* **config:** 更新聊天记录分析助手的提示词，调整分析要求以更好地适应群聊氛围 ([34784dc](https://github.com/WittF/chat-summarizer/commit/34784dc267df7217ce5520d7fd3785e169a0e031))
+
+### 🐛 Bug修复
+
+* **upload:** 在上传超时警告中添加调试配置检查，以便在调试模式下记录超时信息 ([d269c58](https://github.com/WittF/chat-summarizer/commit/d269c5872a3a35796f480ef1f153381d9f9d8d2f))
+
 ## [1.14.0](https://github.com/WittF/chat-summarizer/compare/v1.13.6...v1.14.0) (2025-07-13)
 
 ### ✨ 功能更新
