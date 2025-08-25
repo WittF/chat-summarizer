@@ -1143,7 +1143,8 @@ export function apply(ctx: Context, config: Config) {
         dbOps,
         s3Service.getUploader(),
         getStorageDir,
-        getNextExecutionTime
+        getNextExecutionTime,
+        generateSummaryForRecord
       )
       commandHandler.registerCommands()
       

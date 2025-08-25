@@ -156,6 +156,34 @@ export class DatabaseOperations {
     return records.filter(record => !record.summaryImageUrl)
   }
 
+  // 获取指定日期范围内缺失AI总结的记录
+  async getMissingSummaryRecords(startDate: string, endDate: string): Promise<ChatLogFileRecord[]> {
+    const records = await this.ctx.database.get('chat_log_files', {
+      date: { $gte: startDate, $lte: endDate },
+      status: 'uploaded'
+    })
+    // 只返回还没有生成AI总结的记录
+    return records.filter(record => !record.summaryImageUrl)
+  }
+
+  // 获取指定日期和群组的聊天记录文件（用于重新生成总结）
+  async getChatLogFileForRetry(date: string, guildId?: string): Promise<ChatLogFileRecord | null> {
+    const records = await this.ctx.database.get('chat_log_files', {
+      date,
+      guildId,
+      status: 'uploaded'
+    })
+    return records.length > 0 ? records[0] : null
+  }
+
+  // 清除AI总结记录（用于重新生成）
+  async clearSummaryImage(id: number): Promise<void> {
+    await this.ctx.database.set('chat_log_files', { id }, {
+      summaryImageUrl: undefined,
+      summaryGeneratedAt: 0
+    })
+  }
+
   // 更新聊天记录
   async updateChatRecord(messageId: string, updates: Partial<ChatRecord>): Promise<void> {
     await this.ctx.database.set('chat_records', { messageId }, updates)

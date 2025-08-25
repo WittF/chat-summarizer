@@ -20,7 +20,8 @@ export class CommandHandler {
     private dbOps: DatabaseOperations,
     private s3Uploader: S3Uploader | null,
     private getStorageDir: (subDir: string) => string,
-    private getNextExecutionTime: (targetTime: string) => Date
+    private getNextExecutionTime: (targetTime: string) => Date,
+    private generateSummaryForRecord: (record: any) => Promise<void>
   ) {
     this.exportManager = new ExportManager(ctx, s3Uploader, getStorageDir)
     this.aiService = new AIService(ctx, config)
@@ -73,7 +74,7 @@ export class CommandHandler {
       })
 
     // 导出命令
-    this.ctx.command('cs.export <guildId> <timeRange> [format]', '导出聊天记录（仅管理员可用）')
+    this.ctx.command('cs.export [guildId] [timeRange] [format]', '导出聊天记录（仅管理员可用）')
       .option('format', '-f <format:string>', { fallback: 'json' })
       .option('types', '-t <types:string>', { fallback: '' })
       .option('summarize', '-s, --summarize', { type: 'boolean', fallback: false })
@@ -95,6 +96,23 @@ export class CommandHandler {
           !!options?.summarize,
           !!options?.image
         )
+      })
+
+    // AI总结检查命令
+    this.ctx.command('cs.summary.check [days]', '检查缺失的AI总结（仅管理员可用）')
+      .example('cs.summary.check - 检查最近7天的缺失总结')
+      .example('cs.summary.check 30 - 检查最近30天的缺失总结')
+      .action(async ({ session }, days) => {
+        await this.handleSummaryCheckCommand(session, days)
+      })
+
+    // AI总结重试命令
+    this.ctx.command('cs.summary.retry <date> [guildId]', '重新生成指定日期的AI总结（仅管理员可用）')
+      .example('cs.summary.retry 2024-01-01 - 重新生成2024-01-01所有群组的总结')
+      .example('cs.summary.retry 2024-01-01 123456789 - 重新生成指定群组的总结')
+      .example('cs.summary.retry 2024-01-01 private - 重新生成私聊的总结')
+      .action(async ({ session }, date, guildId) => {
+        await this.handleSummaryRetryCommand(session, date, guildId)
       })
 
     // Markdown渲染测试命令
@@ -279,17 +297,24 @@ export class CommandHandler {
   // 处理导出命令
   private async handleExportCommand(
     session: Session, 
-    guildId: string, 
-    timeRange: string, 
-    format: string, 
-    types: string,
-    enableSummarize: boolean,
-    enableImageSummary: boolean
+    guildId?: string, 
+    timeRange?: string, 
+    format?: string, 
+    types: string = '',
+    enableSummarize: boolean = false,
+    enableImageSummary: boolean = false
   ): Promise<void> {
     try {
       // 检查权限
       if (!this.isAdmin(session.userId)) {
         await this.sendMessage(session, [h.text('权限不足，只有管理员才能使用此命令')])
+        return
+      }
+
+      // 如果没有提供参数，显示帮助信息
+      if (!guildId || !timeRange) {
+          const helpText = `🔧 命令格式：cs.export <群组> <时间范围> [格式] [选项]`
+        await this.sendMessage(session, [h.text(helpText)])
         return
       }
 
@@ -485,6 +510,183 @@ export class CommandHandler {
       await this.sendMessage(session, [h.text(fullMessage)])
     }
   }
+
+  // 处理AI总结检查命令
+  private async handleSummaryCheckCommand(session: Session, days?: string): Promise<void> {
+    try {
+      // 检查权限
+      if (!this.isAdmin(session.userId)) {
+        await this.sendMessage(session, [h.text('权限不足，只有管理员才能使用此命令')])
+        return
+      }
+
+      // 检查AI功能是否启用
+      if (!this.aiService.isEnabled()) {
+        await this.sendMessage(session, [h.text('❌ AI功能未启用，无法检查总结状态')])
+        return
+      }
+
+      const checkDays = days ? parseInt(days) : 7
+      if (isNaN(checkDays) || checkDays <= 0 || checkDays > 365) {
+        await this.sendMessage(session, [h.text('❌ 无效的天数，请输入1-365之间的数字')])
+        return
+      }
+
+      // 发送处理中消息
+      const tempMessage = await this.sendMessage(session, [h.text('🔍 正在检查缺失的AI总结...')])
+
+      // 计算日期范围
+      const today = new Date()
+      const endDate = today.toISOString().split('T')[0] // YYYY-MM-DD 格式
+      const startDateObj = new Date(today)
+      startDateObj.setDate(startDateObj.getDate() - checkDays + 1)
+      const startDate = startDateObj.toISOString().split('T')[0]
+
+      // 获取缺失总结的记录
+      const missingSummaries = await this.dbOps.getMissingSummaryRecords(startDate, endDate)
+
+      // 删除临时消息
+      if (tempMessage && tempMessage[0]) {
+        await session.bot.deleteMessage(session.channelId, tempMessage[0])
+      }
+
+      if (missingSummaries.length === 0) {
+        await this.sendMessage(session, [h.text(`✅ 最近${checkDays}天内所有已上传的聊天记录都已生成AI总结`)])
+        return
+      }
+
+      // 按群组和日期整理缺失的记录
+      const missingByGroup: Record<string, string[]> = {}
+      missingSummaries.forEach(record => {
+        const groupKey = record.guildId || 'private'
+        if (!missingByGroup[groupKey]) {
+          missingByGroup[groupKey] = []
+        }
+        missingByGroup[groupKey].push(record.date)
+      })
+
+      let responseText = `📊 最近${checkDays}天缺失AI总结的记录：\n\n`
+      
+      for (const [groupKey, dates] of Object.entries(missingByGroup)) {
+        const groupName = groupKey === 'private' ? '私聊' : `群组 ${groupKey}`
+        responseText += `🔸 ${groupName}：\n`
+        responseText += `   📅 ${dates.join(', ')}\n\n`
+      }
+
+      responseText += `💡 使用命令重新生成：\n`
+      responseText += `cs.summary.retry <日期> [群组ID]\n\n`
+      responseText += `📝 示例：\n`
+      responseText += `cs.summary.retry ${missingSummaries[0].date}\n`
+      if (missingSummaries[0].guildId) {
+        responseText += `cs.summary.retry ${missingSummaries[0].date} ${missingSummaries[0].guildId}`
+      }
+
+      await this.sendMessage(session, [h.text(responseText)])
+
+    } catch (error: any) {
+      console.error('检查AI总结失败:', error)
+      await this.sendMessage(session, [h.text(`❌ 检查失败: ${error?.message || '未知错误'}`)])
+    }
+  }
+
+  // 处理AI总结重试命令
+  private async handleSummaryRetryCommand(session: Session, date: string, guildId?: string): Promise<void> {
+    try {
+      // 检查权限
+      if (!this.isAdmin(session.userId)) {
+        await this.sendMessage(session, [h.text('权限不足，只有管理员才能使用此命令')])
+        return
+      }
+
+      // 检查AI功能是否启用
+      if (!this.aiService.isEnabled()) {
+        await this.sendMessage(session, [h.text('❌ AI功能未启用，无法生成总结')])
+        return
+      }
+
+      // 验证日期格式
+      if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        await this.sendMessage(session, [h.text('❌ 无效的日期格式，请使用 YYYY-MM-DD 格式（如：2024-01-01）')])
+        return
+      }
+
+      // 处理群组ID
+      let targetGuildId: string | undefined
+      if (guildId === 'private') {
+        targetGuildId = undefined
+      } else if (guildId) {
+        targetGuildId = guildId
+      }
+
+      // 发送处理中消息
+      const tempMessage = await this.sendMessage(session, [h.text('🔄 正在重新生成AI总结...')])
+
+      // 如果指定了群组，处理单个群组
+      if (targetGuildId !== undefined) {
+        const record = await this.dbOps.getChatLogFileForRetry(date, targetGuildId)
+        if (!record) {
+          if (tempMessage && tempMessage[0]) {
+            await session.bot.deleteMessage(session.channelId, tempMessage[0])
+          }
+          const groupInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
+          await this.sendMessage(session, [h.text(`❌ 未找到 ${groupInfo} 在 ${date} 的聊天记录文件`)])
+          return
+        }
+
+        // 清除旧的总结记录
+        if (record.summaryImageUrl) {
+          await this.dbOps.clearSummaryImage(record.id!)
+        }
+
+        await this.generateSummaryForRecord(record)
+        
+        if (tempMessage && tempMessage[0]) {
+          await session.bot.deleteMessage(session.channelId, tempMessage[0])
+        }
+
+        const groupInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
+        await this.sendMessage(session, [h.text(`✅ ${groupInfo} 在 ${date} 的AI总结重新生成完成`)])
+      } else {
+        // 处理该日期的所有群组
+        const allRecords = await this.dbOps.getChatLogFilesForSummary(date)
+        if (allRecords.length === 0) {
+          if (tempMessage && tempMessage[0]) {
+            await session.bot.deleteMessage(session.channelId, tempMessage[0])
+          }
+          await this.sendMessage(session, [h.text(`❌ 未找到 ${date} 的任何聊天记录文件`)])
+          return
+        }
+
+        let successCount = 0
+        let totalCount = allRecords.length
+
+        for (const record of allRecords) {
+          try {
+            // 清除旧的总结记录
+            if (record.summaryImageUrl) {
+              await this.dbOps.clearSummaryImage(record.id!)
+            }
+            await this.generateSummaryForRecord(record)
+            successCount++
+          } catch (error: any) {
+            console.error(`重新生成总结失败 (${record.guildId || 'private'}):`, error)
+          }
+        }
+
+        if (tempMessage && tempMessage[0]) {
+          await session.bot.deleteMessage(session.channelId, tempMessage[0])
+        }
+
+        await this.sendMessage(session, [h.text(`✅ ${date} 的AI总结重新生成完成：${successCount}/${totalCount} 个成功`)])
+      }
+
+    } catch (error: any) {
+      console.error('重新生成AI总结失败:', error)
+      await this.sendMessage(session, [h.text(`❌ 重新生成失败: ${error?.message || '未知错误'}`)])
+    }
+  }
+
+
 
   // 处理Markdown测试命令
   private async handleMdTestCommand(session: Session): Promise<void> {
