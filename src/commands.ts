@@ -130,6 +130,15 @@ export class CommandHandler {
       .action(async ({ session }) => {
         await this.handleMdTestCommand(session)
       })
+
+    // AI分析命令
+    this.ctx.command('cs.analysis <query:text>', 'AI分析聊天记录（仅管理员可用）')
+      .example('cs.analysis 昨天群里发生了什么大事？')
+      .example('cs.analysis 最近一周大家聊了什么游戏？')
+      .example('cs.analysis 今天谁最活跃？')
+      .action(async ({ session }, query) => {
+        await this.handleAnalysisCommand(session, query)
+      })
   }
 
   // 处理获取URL命令
@@ -874,7 +883,7 @@ export class CommandHandler {
       '### 手势和人物',
       '👋 🤚 🖐️ ✋ 🖖 👌 🤌 🤏 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 👐 🤲 🤝 🙏',
       '',
-      '### 动物和自然', 
+      '### 动物和自然',
       '🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🐔 🐧 🐦 🐤 🐣 🐥 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪲 🐛 🦋 🐌 🐞 🐜 🪰 🪱 🦗',
       '',
       '### 食物和饮料',
@@ -967,7 +976,162 @@ export class CommandHandler {
       '---',
       `*测试时间: ${new Date().toLocaleString('zh-CN')} ⏰*`
     ]
-    
+
     return testMarkdown.join('\n')
+  }
+
+  // 处理AI分析命令
+  private async handleAnalysisCommand(session: Session, query?: string): Promise<void> {
+    try {
+      // 检查权限
+      if (!this.isAdmin(session.userId)) {
+        await this.sendMessage(session, [h.text('权限不足，只有管理员才能使用此命令')])
+        return
+      }
+
+      // 检查是否提供了查询内容
+      if (!query || query.trim() === '') {
+        await this.sendMessage(session, [h.text('请提供分析查询内容\n\n💡 示例：\ncs.analysis 昨天群里发生了什么大事？\ncs.analysis 最近一周大家聊了什么游戏？')])
+        return
+      }
+
+      // 解析群组ID
+      let targetGuildId: string | undefined
+      if (session.guildId) {
+        targetGuildId = session.guildId
+      } else {
+        // 私聊中使用，分析私聊记录
+        targetGuildId = undefined
+      }
+
+      // 检查AI功能是否启用
+      if (!this.aiService.isEnabled(targetGuildId || 'private')) {
+        const guildInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
+        await this.sendMessage(session, [h.text(`❌ AI功能未启用，或${guildInfo}已禁用AI功能，请检查AI配置`)])
+        return
+      }
+
+      // 第一步：解析用户查询
+      const parseMessage = await this.sendMessage(session, [h.text('🔍 正在解析您的查询...')])
+
+      let parsedQuery: { timeRange: string; analysisPrompt: string }
+      try {
+        parsedQuery = await this.aiService.parseAnalysisQuery(query, targetGuildId || 'private')
+      } catch (error: any) {
+        // 删除临时消息
+        if (parseMessage && parseMessage[0]) {
+          await session.bot.deleteMessage(session.channelId, parseMessage[0])
+        }
+        await this.sendMessage(session, [h.text(`❌ 查询解析失败: ${error?.message || '未知错误'}`)])
+        return
+      }
+
+      // 删除解析临时消息
+      if (parseMessage && parseMessage[0]) {
+        await session.bot.deleteMessage(session.channelId, parseMessage[0])
+      }
+
+      // 第二步：获取聊天记录
+      const fetchMessage = await this.sendMessage(session, [h.text(`📥 正在获取聊天记录 (${parsedQuery.timeRange})...`)])
+
+      let chatContent: string
+      let messageCount: number
+      try {
+        // 使用 ExportManager 获取聊天记录
+        const exportRequest: ExportRequest = {
+          guildId: targetGuildId,
+          timeRange: parsedQuery.timeRange,
+          format: 'txt'
+        }
+
+        // 解析时间范围并获取消息
+        const timeRange = this.exportManager.parseTimeRange(parsedQuery.timeRange)
+        const localFiles = await this.exportManager['checkLocalFiles'](targetGuildId, timeRange.dateStrings)
+        const s3Files = await this.exportManager['checkS3Files'](targetGuildId, timeRange.dateStrings)
+
+        // 如果本地和S3都没有数据，下载S3文件
+        let filesToProcess = localFiles
+        if (localFiles.length === 0 && s3Files.length > 0) {
+          const downloadedFiles = await this.exportManager['downloadFromS3'](s3Files)
+          filesToProcess = downloadedFiles
+        }
+
+        if (filesToProcess.length === 0) {
+          // 删除临时消息
+          if (fetchMessage && fetchMessage[0]) {
+            await session.bot.deleteMessage(session.channelId, fetchMessage[0])
+          }
+          const guildInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
+          await this.sendMessage(session, [h.text(`❌ 未找到 ${guildInfo} 在 ${parsedQuery.timeRange} 的聊天记录`)])
+          return
+        }
+
+        // 解析消息文件
+        const messages = await this.exportManager['parseMessageFiles'](filesToProcess)
+
+        if (messages.length === 0) {
+          // 删除临时消息
+          if (fetchMessage && fetchMessage[0]) {
+            await session.bot.deleteMessage(session.channelId, fetchMessage[0])
+          }
+          await this.sendMessage(session, [h.text(`❌ 该时间段没有聊天记录`)])
+          return
+        }
+
+        messageCount = messages.length
+        chatContent = this.exportManager['formatExportContent'](messages, 'txt')
+
+      } catch (error: any) {
+        // 删除临时消息
+        if (fetchMessage && fetchMessage[0]) {
+          await session.bot.deleteMessage(session.channelId, fetchMessage[0])
+        }
+        await this.sendMessage(session, [h.text(`❌ 获取聊天记录失败: ${error?.message || '未知错误'}`)])
+        return
+      }
+
+      // 删除获取记录临时消息
+      if (fetchMessage && fetchMessage[0]) {
+        await session.bot.deleteMessage(session.channelId, fetchMessage[0])
+      }
+
+      // 第三步：AI分析
+      const analyzeMessage = await this.sendMessage(session, [h.text('🤖 正在进行AI分析，请稍候...')])
+
+      try {
+        const analysisResult = await this.aiService.analyzeChat(
+          chatContent,
+          parsedQuery.analysisPrompt,
+          parsedQuery.timeRange,
+          messageCount,
+          targetGuildId || 'private'
+        )
+
+        // 删除分析临时消息
+        if (analyzeMessage && analyzeMessage[0]) {
+          await session.bot.deleteMessage(session.channelId, analyzeMessage[0])
+        }
+
+        // 发送分析结果
+        const resultHeader = `📊 AI分析结果\n\n` +
+                           `🔍 查询: ${query}\n` +
+                           `📅 时间范围: ${parsedQuery.timeRange}\n` +
+                           `📝 消息数量: ${messageCount} 条\n` +
+                           `\n────────────────\n\n`
+
+        await this.sendMessage(session, [h.text(resultHeader + analysisResult)])
+
+      } catch (error: any) {
+        // 删除分析临时消息
+        if (analyzeMessage && analyzeMessage[0]) {
+          await session.bot.deleteMessage(session.channelId, analyzeMessage[0])
+        }
+        await this.sendMessage(session, [h.text(`❌ AI分析失败: ${error?.message || '未知错误'}`)])
+      }
+
+    } catch (error: any) {
+      console.error('处理分析命令失败:', error)
+      await this.sendMessage(session, [h.text(`❌ 命令处理失败: ${error?.message || '未知错误'}`)])
+    }
   }
 } 

@@ -409,7 +409,7 @@ export class AIService {
         2,
         'private'
       )
-      
+
       if (result) {
         return { success: true }
       } else {
@@ -423,6 +423,228 @@ export class AIService {
         success: false,
         error: handleError(error, '连接测试失败')
       }
+    }
+  }
+
+  /**
+   * 解析用户的自然语言分析查询
+   * 返回时间范围和分析提示词
+   */
+  async parseAnalysisQuery(userQuery: string, guildId: string): Promise<{
+    timeRange: string
+    analysisPrompt: string
+  }> {
+    if (!this.isEnabled(guildId)) {
+      throw new Error('AI功能未启用或该群组已禁用AI功能')
+    }
+
+    if (!this.config.apiUrl || !this.config.apiKey) {
+      throw new Error('AI配置不完整，请检查API URL和密钥')
+    }
+
+    try {
+      const systemPrompt = `你是一个聊天记录分析助手。用户会用自然语言提出对聊天记录的分析需求。
+你需要解析用户的需求，并返回JSON格式的结果，包含两个字段：
+1. timeRange: 需要分析的时间范围（支持的值：today, yesterday, last7days, lastweek, thismonth, lastmonth，或具体日期如 2024-01-01）
+2. analysisPrompt: 根据用户需求生成的详细分析提示词，用于指导后续的聊天记录分析
+
+请确保返回的是有效的JSON格式，不要包含其他内容。
+
+示例输入："昨天群里发生了什么大事？"
+示例输出：
+{
+  "timeRange": "yesterday",
+  "analysisPrompt": "请分析昨天的聊天记录，重点关注群内发生的重要事件、话题讨论和决定。请列出主要的大事件，包括参与人员和讨论内容。"
+}
+
+示例输入："最近一周大家聊了什么游戏？"
+示例输出：
+{
+  "timeRange": "last7days",
+  "analysisPrompt": "请分析最近7天的聊天记录，找出所有关于游戏的讨论。列出提到的游戏名称、讨论的内容要点、参与讨论的群友等信息。"
+}
+
+注意：
+- 如果用户没有明确指定时间，默认使用 "yesterday"
+- analysisPrompt 要详细、具体，能够指导AI进行有针对性的分析
+- 必须返回有效的JSON格式，不要添加任何解释性文字`
+
+      const userPrompt = `用户查询：${userQuery}
+
+请解析这个查询，返回JSON格式的结果。`
+
+      const requestBody = {
+        model: this.config.model || 'gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.3
+      }
+
+      if (this.config.maxTokens && this.config.maxTokens > 0) {
+        requestBody['max_tokens'] = this.config.maxTokens
+      }
+
+      this.logger.debug('发送查询解析请求', {
+        url: this.config.apiUrl,
+        userQuery
+      })
+
+      const response = await this.ctx.http.post(this.config.apiUrl, requestBody, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`
+        },
+        timeout: (this.config.timeout || 30) * 1000
+      })
+
+      if (!response || !response.choices || response.choices.length === 0) {
+        throw new Error('AI接口未返回有效响应')
+      }
+
+      const content = response.choices[0].message?.content?.trim()
+      if (!content) {
+        throw new Error('AI返回内容为空')
+      }
+
+      // 解析JSON响应
+      let parsedResult: any
+      try {
+        // 尝试提取JSON（可能被包裹在markdown代码块中）
+        const jsonMatch = content.match(/\{[\s\S]*\}/)
+        if (!jsonMatch) {
+          throw new Error('响应中未找到JSON格式')
+        }
+        parsedResult = JSON.parse(jsonMatch[0])
+      } catch (parseError) {
+        this.logger.error('解析AI返回的JSON失败', { content, error: parseError })
+        throw new Error(`解析AI响应失败: ${parseError.message}`)
+      }
+
+      // 验证返回的字段
+      if (!parsedResult.timeRange || !parsedResult.analysisPrompt) {
+        throw new Error('AI返回的JSON缺少必需字段')
+      }
+
+      this.logger.info('查询解析成功', {
+        userQuery,
+        timeRange: parsedResult.timeRange,
+        analysisPromptLength: parsedResult.analysisPrompt.length
+      })
+
+      return {
+        timeRange: parsedResult.timeRange,
+        analysisPrompt: parsedResult.analysisPrompt
+      }
+
+    } catch (error) {
+      this.logger.error('解析用户查询失败', {
+        error: error.message,
+        stack: error.stack
+      })
+      throw new Error(`解析查询失败: ${error.message}`)
+    }
+  }
+
+  /**
+   * 执行聊天记录分析
+   */
+  async analyzeChat(
+    content: string,
+    analysisPrompt: string,
+    timeRange: string,
+    messageCount: number,
+    guildId: string
+  ): Promise<string> {
+    if (!this.isEnabled(guildId)) {
+      throw new Error('AI功能未启用或该群组已禁用AI功能')
+    }
+
+    if (!this.config.apiUrl || !this.config.apiKey) {
+      throw new Error('AI配置不完整，请检查API URL和密钥')
+    }
+
+    try {
+      const systemPrompt = `你是专业的聊天记录分析助手。你需要根据用户的分析需求，仔细阅读聊天记录并提供详细的分析结果。
+
+分析要求：
+1. 准确理解用户的分析需求
+2. 仔细阅读聊天记录，提取相关信息
+3. 结构化呈现分析结果，使用清晰的段落和列表
+4. 使用适当的emoji增强可读性
+5. 如果聊天记录中没有相关内容，如实说明
+
+输出格式：
+- 使用Markdown格式
+- 结构清晰，层次分明
+- 重点信息用粗体标注
+- 适当使用emoji图标`
+
+      const groupInfo = this.getGroupInfo(guildId)
+      const userPrompt = `📊 **分析任务：**
+${analysisPrompt}
+
+📅 **时间范围：** ${timeRange}
+📝 **消息数量：** ${messageCount} 条
+👥 **聊天群组：** ${groupInfo}
+
+💬 **聊天记录：**
+${content}
+
+请根据上述分析任务和聊天记录，提供详细的分析结果。`
+
+      const requestBody = {
+        model: this.config.model || 'gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7
+      }
+
+      if (this.config.maxTokens && this.config.maxTokens > 0) {
+        requestBody['max_tokens'] = this.config.maxTokens
+      }
+
+      this.logger.debug('发送分析请求', {
+        url: this.config.apiUrl,
+        contentLength: content.length,
+        timeRange
+      })
+
+      const timeoutMs = (this.config.timeout || 60) * 1000
+
+      const response = await this.ctx.http.post(this.config.apiUrl, requestBody, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`
+        },
+        timeout: timeoutMs
+      })
+
+      if (!response || !response.choices || response.choices.length === 0) {
+        throw new Error('AI接口未返回有效响应')
+      }
+
+      const analysisResult = response.choices[0].message?.content?.trim()
+      if (!analysisResult) {
+        throw new Error('AI返回内容为空')
+      }
+
+      this.logger.info('分析完成', {
+        inputLength: content.length,
+        outputLength: analysisResult.length
+      })
+
+      return analysisResult
+
+    } catch (error) {
+      this.logger.error('聊天记录分析失败', {
+        error: error.message,
+        stack: error.stack
+      })
+      throw new Error(`分析失败: ${error.message}`)
     }
   }
 }

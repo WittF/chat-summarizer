@@ -37,6 +37,11 @@
   - 群组参数：
     - `current` - 当前群（仅在群聊中有效）
     - `123456789` - 具体群号
+- `cs.analysis <自然语言查询>`: AI分析聊天记录（仅管理员可用）
+  - 💡 **智能功能**：使用自然语言提问，AI自动理解并分析聊天记录
+  - 自动识别时间范围（昨天、今天、最近一周等）
+  - 根据问题生成针对性分析结果
+  - 支持各种类型的查询（事件总结、话题分析、活跃度统计等）
   - 时间范围：
     - 预设：`today`, `yesterday`, `last7days`, `lastweek`, `thismonth`, `lastmonth`
     - 具体日期：`2024-01-01` 或 `2024-01-01,2024-01-31`
@@ -87,7 +92,8 @@
    cs.export current yesterday txt --summarize # 导出昨天记录并生成AI总结
    cs.export 123456789 today json -t text -s # 导出今天的文本消息并AI总结
    cs.export 123456789 thismonth csv --summarize # 导出本月记录并AI总结
-   
+   ```
+
 5. **AI总结管理**：
    ```
    cs.summary.check              # 检查最近7天缺失的AI总结
@@ -99,3 +105,13 @@
    cs.summary.get 2024-01-01     # 获取2024-01-01当前群的AI总结图片
    cs.summary.get 2024-01-01 123456789  # 获取指定群组的AI总结图片
    cs.summary.get 2024-01-01 private    # 获取私聊的AI总结图片
+   ```
+
+6. **AI智能分析**：
+   ```
+   cs.analysis 昨天群里发生了什么大事？
+   cs.analysis 最近一周大家聊了什么游戏？
+   cs.analysis 今天谁最活跃？
+   cs.analysis 这个月讨论最多的话题是什么？
+   cs.analysis 最近大家在聊什么技术问题？
+   ```
