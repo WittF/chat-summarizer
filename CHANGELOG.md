@@ -1,3 +1,10 @@
+## [1.17.0](https://github.com/WittF/chat-summarizer/compare/v1.16.0...v1.17.0) (2025-10-07)
+
+### ✨ 功能更新
+
+* **ai:** 添加AI聊天记录分析功能，支持自然语言查询并返回分析结果，更新命令处理逻辑以支持管理员使用 ([fa0e32d](https://github.com/WittF/chat-summarizer/commit/fa0e32d08a9572b5edcc5926d4e5365948e923d1))
+* **commands:** 添加获取AI总结图片的命令，支持指定日期和群组，优化日期解析功能 ([8dbaf6f](https://github.com/WittF/chat-summarizer/commit/8dbaf6f89f4b6fb6c2721c8d9cc2a188f68fb7cc))
+
 ## [1.16.0](https://github.com/WittF/chat-summarizer/compare/v1.15.0...v1.16.0) (2025-08-25)
 
 ### ✨ 功能更新
