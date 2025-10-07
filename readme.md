@@ -31,10 +31,12 @@
 - `cs.summary.retry <日期> [群组ID]`: 重新生成指定日期的AI总结（仅管理员可用）
   - 支持重新生成单个群组或该日期所有群组的总结
   - 自动清除旧的总结记录并重新生成
+- `cs.summary.get <日期> [群组ID]`: 获取指定日期的AI总结图片（仅管理员可用）
+  - 支持预设日期（today、yesterday等）和具体日期格式
+  - 在群聊中可省略群组参数，自动使用当前群组
   - 群组参数：
     - `current` - 当前群（仅在群聊中有效）
     - `123456789` - 具体群号
-    
   - 时间范围：
     - 预设：`today`, `yesterday`, `last7days`, `lastweek`, `thismonth`, `lastmonth`
     - 具体日期：`2024-01-01` 或 `2024-01-01,2024-01-31`
@@ -93,3 +95,7 @@
    cs.summary.retry 2024-01-01   # 重新生成2024-01-01所有群组的总结
    cs.summary.retry 2024-01-01 123456789  # 重新生成指定群组的总结
    cs.summary.retry 2024-01-01 private    # 重新生成私聊的总结
+   cs.summary.get yesterday      # 获取昨天当前群的AI总结图片
+   cs.summary.get 2024-01-01     # 获取2024-01-01当前群的AI总结图片
+   cs.summary.get 2024-01-01 123456789  # 获取指定群组的AI总结图片
+   cs.summary.get 2024-01-01 private    # 获取私聊的AI总结图片

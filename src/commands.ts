@@ -115,6 +115,16 @@ export class CommandHandler {
         await this.handleSummaryRetryCommand(session, date, guildId)
       })
 
+    // AI总结获取命令
+    this.ctx.command('cs.summary.get <date> [guildId]', '获取指定日期的AI总结图片（仅管理员可用）')
+      .example('cs.summary.get 2024-01-01 - 获取2024-01-01当前群的AI总结图片（仅在群聊中有效）')
+      .example('cs.summary.get 2024-01-01 123456789 - 获取指定群组的AI总结图片')
+      .example('cs.summary.get 2024-01-01 private - 获取私聊的AI总结图片')
+      .example('cs.summary.get yesterday - 获取昨天当前群的AI总结图片')
+      .action(async ({ session }, date, guildId) => {
+        await this.handleSummaryGetCommand(session, date, guildId)
+      })
+
     // Markdown渲染测试命令
     this.ctx.command('cs.mdtest', '测试Markdown和Emoji渲染效果')
       .action(async ({ session }) => {
@@ -683,6 +693,136 @@ export class CommandHandler {
     } catch (error: any) {
       console.error('重新生成AI总结失败:', error)
       await this.sendMessage(session, [h.text(`❌ 重新生成失败: ${error?.message || '未知错误'}`)])
+    }
+  }
+
+  // 处理AI总结获取命令
+  private async handleSummaryGetCommand(session: Session, date: string, guildId?: string): Promise<void> {
+    try {
+      // 检查权限
+      if (!this.isAdmin(session.userId)) {
+        await this.sendMessage(session, [h.text('权限不足，只有管理员才能使用此命令')])
+        return
+      }
+
+      // 检查AI功能是否启用
+      if (!this.aiService.isEnabled()) {
+        await this.sendMessage(session, [h.text('❌ AI功能未启用，无法获取总结')])
+        return
+      }
+
+      // 解析日期
+      const parsedDate = this.parseDate(date)
+      if (!parsedDate) {
+        await this.sendMessage(session, [h.text('❌ 无效的日期格式，请使用 YYYY-MM-DD 格式或预设值（如：yesterday、today）')])
+        return
+      }
+
+      // 处理群组ID
+      let targetGuildId: string | undefined
+      if (guildId === 'current') {
+        // 使用当前群组
+        if (!session.guildId) {
+          await this.sendMessage(session, [h.text('❌ 当前不在群聊中，无法使用 "current" 参数')])
+          return
+        }
+        targetGuildId = session.guildId
+      } else if (guildId === 'private') {
+        // 私聊记录
+        targetGuildId = undefined
+      } else if (guildId) {
+        // 具体群号
+        targetGuildId = guildId
+      } else {
+        // 未指定群组，使用当前群组（如果在群聊中）
+        if (session.guildId) {
+          targetGuildId = session.guildId
+        } else {
+          await this.sendMessage(session, [h.text('❌ 请指定群组ID或在群聊中使用命令\n\n💡 使用方式：\n• cs.summary.get 2024-01-01 123456789\n• cs.summary.get 2024-01-01 private\n• 在群聊中：cs.summary.get 2024-01-01')])
+          return
+        }
+      }
+
+      // 发送处理中消息
+      const tempMessage = await this.sendMessage(session, [h.text('🔍 正在获取AI总结图片...')])
+
+      // 获取总结图片URL
+      const summaryImageUrl = await this.dbOps.getSummaryImageUrl(parsedDate, targetGuildId)
+
+      // 删除临时消息
+      if (tempMessage && tempMessage[0]) {
+        await session.bot.deleteMessage(session.channelId, tempMessage[0])
+      }
+
+      if (!summaryImageUrl) {
+        const groupInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
+        await this.sendMessage(session, [h.text(`❌ 未找到 ${groupInfo} 在 ${parsedDate} 的AI总结图片\n\n💡 可能原因：\n• 该日期没有聊天记录\n• 聊天记录尚未上传\n• AI总结尚未生成\n\n🔧 解决方法：\n• 使用 cs.summary.check 检查缺失的总结\n• 使用 cs.summary.retry ${parsedDate}${targetGuildId ? ` ${targetGuildId}` : ''} 重新生成`)])
+        return
+      }
+
+      // 发送总结图片
+      try {
+        const groupInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
+        await this.sendMessage(session, [
+          h.text(`📊 ${groupInfo} - ${parsedDate} AI总结：`),
+          h.image(summaryImageUrl)
+        ])
+      } catch (error: any) {
+        console.error('发送总结图片失败:', error)
+        await this.sendMessage(session, [h.text(`❌ 发送图片失败: ${error?.message || '未知错误'}\n\n🔗 图片链接: ${summaryImageUrl}`)])
+      }
+
+    } catch (error: any) {
+      console.error('获取AI总结失败:', error)
+      await this.sendMessage(session, [h.text(`❌ 获取失败: ${error?.message || '未知错误'}`)])
+    }
+  }
+
+  // 解析日期字符串，支持预设值和具体日期
+  private parseDate(dateInput: string): string | null {
+    try {
+      const now = new Date()
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      
+      let targetDate: Date
+
+      switch (dateInput.toLowerCase()) {
+        case 'today':
+          targetDate = today
+          break
+          
+        case 'yesterday':
+          targetDate = new Date(today)
+          targetDate.setDate(targetDate.getDate() - 1)
+          break
+          
+        case 'last7days':
+          targetDate = new Date(today)
+          targetDate.setDate(targetDate.getDate() - 7)
+          break
+          
+        default:
+          // 尝试解析具体日期
+          if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            // 完整格式：2024-01-01
+            targetDate = new Date(dateInput + 'T00:00:00')
+          } else if (dateInput.match(/^\d{2}-\d{2}$/)) {
+            // 简化格式：01-01 (当年)
+            targetDate = new Date(`${now.getFullYear()}-${dateInput}T00:00:00`)
+          } else {
+            return null
+          }
+      }
+
+      // 验证日期是否有效
+      if (isNaN(targetDate.getTime())) {
+        return null
+      }
+
+      // 返回 YYYY-MM-DD 格式
+      return targetDate.toISOString().split('T')[0]
+    } catch {
+      return null
     }
   }
 

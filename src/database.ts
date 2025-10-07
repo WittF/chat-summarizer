@@ -184,6 +184,28 @@ export class DatabaseOperations {
     })
   }
 
+  // 获取指定日期和群组的AI总结图片URL
+  async getSummaryImageUrl(date: string, guildId?: string): Promise<string | null> {
+    const records = await this.ctx.database.get('chat_log_files', {
+      date,
+      guildId,
+      status: 'uploaded'
+    })
+    
+    const record = records.find(r => r.summaryImageUrl)
+    return record?.summaryImageUrl || null
+  }
+
+  // 获取指定日期范围内有AI总结的记录
+  async getRecordsWithSummary(startDate: string, endDate: string): Promise<ChatLogFileRecord[]> {
+    const records = await this.ctx.database.get('chat_log_files', {
+      date: { $gte: startDate, $lte: endDate },
+      status: 'uploaded'
+    })
+    // 只返回已生成AI总结的记录
+    return records.filter(record => record.summaryImageUrl)
+  }
+
   // 更新聊天记录
   async updateChatRecord(messageId: string, updates: Partial<ChatRecord>): Promise<void> {
     await this.ctx.database.set('chat_records', { messageId }, updates)
