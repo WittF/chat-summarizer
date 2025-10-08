@@ -1,3 +1,9 @@
+## [1.18.0](https://github.com/WittF/chat-summarizer/compare/v1.17.0...v1.18.0) (2025-10-08)
+
+### ✨ 功能更新
+
+* **analysis:** 优化AI分析命令输出格式和日期处理 ([07e5583](https://github.com/WittF/chat-summarizer/commit/07e55832a963b76eca4bad8d67ee0b648b90a229))
+
 ## [1.17.0](https://github.com/WittF/chat-summarizer/compare/v1.16.0...v1.17.0) (2025-10-07)
 
 ### ✨ 功能更新
