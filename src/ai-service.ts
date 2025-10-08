@@ -443,35 +443,56 @@ export class AIService {
     }
 
     try {
+      // 获取当前日期信息
+      const now = new Date()
+      const today = now.toISOString().split('T')[0]
+      const yesterday = new Date(now)
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yesterdayStr = yesterday.toISOString().split('T')[0]
+
       const systemPrompt = `你是一个聊天记录分析助手。用户会用自然语言提出对聊天记录的分析需求。
 你需要解析用户的需求，并返回JSON格式的结果，包含两个字段：
-1. timeRange: 需要分析的时间范围（支持的值：today, yesterday, last7days, lastweek, thismonth, lastmonth，或具体日期如 2024-01-01）
-2. analysisPrompt: 根据用户需求生成的详细分析提示词，用于指导后续的聊天记录分析
+1. timeRange: 需要分析的时间范围，必须是具体日期格式
+   - 单日：使用 YYYY-MM-DD 格式（如：2025-01-07）
+   - 多日：使用逗号分隔的日期列表（如：2025-01-05,2025-01-06,2025-01-07）
+   - 注意：必须返回具体日期，不要返回 "yesterday"、"last7days" 等相对时间
+2. analysisPrompt: 根据用户需求生成的简洁分析提示词，用于指导后续的聊天记录分析
 
 请确保返回的是有效的JSON格式，不要包含其他内容。
 
-示例输入："昨天群里发生了什么大事？"
+示例输入（今天是 2025-01-08）："昨天群里发生了什么大事？"
 示例输出：
 {
-  "timeRange": "yesterday",
-  "analysisPrompt": "请分析昨天的聊天记录，重点关注群内发生的重要事件、话题讨论和决定。请列出主要的大事件，包括参与人员和讨论内容。"
+  "timeRange": "2025-01-07",
+  "analysisPrompt": "找出聊天记录中的重要事件、热门话题和重要决定，简洁列出。"
 }
 
-示例输入："最近一周大家聊了什么游戏？"
+示例输入（今天是 2025-01-08）："最近3天大家聊了什么游戏？"
 示例输出：
 {
-  "timeRange": "last7days",
-  "analysisPrompt": "请分析最近7天的聊天记录，找出所有关于游戏的讨论。列出提到的游戏名称、讨论的内容要点、参与讨论的群友等信息。"
+  "timeRange": "2025-01-06,2025-01-07,2025-01-08",
+  "analysisPrompt": "找出所有关于游戏的讨论，列出提到的游戏名称和主要讨论内容。"
+}
+
+示例输入（今天是 2025-01-08）："昨天的金句"
+示例输出：
+{
+  "timeRange": "2025-01-07",
+  "analysisPrompt": "找出聊天记录中最有趣、最精彩或最有哲理的一句话，只返回这一句话和发送者信息。"
 }
 
 注意：
-- 如果用户没有明确指定时间，默认使用 "yesterday"
-- analysisPrompt 要详细、具体，能够指导AI进行有针对性的分析
+- 如果用户没有明确指定时间，默认使用昨天的日期
+- analysisPrompt 要简洁、具体，指导AI给出不超过100字的分析结果
 - 必须返回有效的JSON格式，不要添加任何解释性文字`
 
-      const userPrompt = `用户查询：${userQuery}
+      const userPrompt = `当前日期信息：
+- 今天：${today}
+- 昨天：${yesterdayStr}
 
-请解析这个查询，返回JSON格式的结果。`
+用户查询：${userQuery}
+
+请根据当前日期，将用户查询中的相对时间转换为具体日期，然后返回JSON格式的结果。`
 
       const requestBody = {
         model: this.config.model || 'gpt-3.5-turbo',
@@ -566,33 +587,31 @@ export class AIService {
     }
 
     try {
-      const systemPrompt = `你是专业的聊天记录分析助手。你需要根据用户的分析需求，仔细阅读聊天记录并提供详细的分析结果。
+      const systemPrompt = `你是专业的聊天记录分析助手。你需要根据用户的分析需求，仔细阅读聊天记录并提供简洁的分析结果。
 
 分析要求：
 1. 准确理解用户的分析需求
 2. 仔细阅读聊天记录，提取相关信息
-3. 结构化呈现分析结果，使用清晰的段落和列表
-4. 使用适当的emoji增强可读性
-5. 如果聊天记录中没有相关内容，如实说明
+3. 回答简洁明了，不超过100字
+4. 如果聊天记录中没有相关内容，如实说明
 
 输出格式：
-- 使用Markdown格式
-- 结构清晰，层次分明
-- 重点信息用粗体标注
-- 适当使用emoji图标`
+- 使用纯文本格式，不使用 Markdown、加粗、斜体等特殊格式
+- 直接给出分析结果，不需要标题或结构化排版
+- 语言精炼，一针见血
+- 如果是引用消息，格式为：用户名(ID:用户ID): 消息内容`
 
       const groupInfo = this.getGroupInfo(guildId)
-      const userPrompt = `📊 **分析任务：**
-${analysisPrompt}
+      const userPrompt = `分析任务：${analysisPrompt}
 
-📅 **时间范围：** ${timeRange}
-📝 **消息数量：** ${messageCount} 条
-👥 **聊天群组：** ${groupInfo}
+日期：${timeRange}
+消息数量：${messageCount} 条
+聊天群组：${groupInfo}
 
-💬 **聊天记录：**
+聊天记录：
 ${content}
 
-请根据上述分析任务和聊天记录，提供详细的分析结果。`
+请根据上述分析任务和聊天记录，提供简洁的分析结果（不超过100字，使用纯文本格式）。`
 
       const requestBody = {
         model: this.config.model || 'gpt-3.5-turbo',

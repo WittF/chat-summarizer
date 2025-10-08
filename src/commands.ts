@@ -1032,22 +1032,19 @@ export class CommandHandler {
       }
 
       // 第二步：获取聊天记录
-      const fetchMessage = await this.sendMessage(session, [h.text(`📥 正在获取聊天记录 (${parsedQuery.timeRange})...`)])
+      const fetchMessage = await this.sendMessage(session, [h.text(`📥 正在获取聊天记录...`)])
 
       let chatContent: string
       let messageCount: number
+      let dateRangeStr: string
       try {
-        // 使用 ExportManager 获取聊天记录
-        const exportRequest: ExportRequest = {
-          guildId: targetGuildId,
-          timeRange: parsedQuery.timeRange,
-          format: 'txt'
-        }
+        // AI 返回的是具体日期或日期列表，直接解析
+        // 格式：单日 "2025-01-07" 或 多日 "2025-01-05,2025-01-06,2025-01-07"
+        const dateStrings = parsedQuery.timeRange.split(',').map(d => d.trim())
+        dateRangeStr = dateStrings.join(', ')
 
-        // 解析时间范围并获取消息
-        const timeRange = this.exportManager.parseTimeRange(parsedQuery.timeRange)
-        const localFiles = await this.exportManager['checkLocalFiles'](targetGuildId, timeRange.dateStrings)
-        const s3Files = await this.exportManager['checkS3Files'](targetGuildId, timeRange.dateStrings)
+        const localFiles = await this.exportManager['checkLocalFiles'](targetGuildId, dateStrings)
+        const s3Files = await this.exportManager['checkS3Files'](targetGuildId, dateStrings)
 
         // 如果本地和S3都没有数据，下载S3文件
         let filesToProcess = localFiles
@@ -1062,7 +1059,7 @@ export class CommandHandler {
             await session.bot.deleteMessage(session.channelId, fetchMessage[0])
           }
           const guildInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
-          await this.sendMessage(session, [h.text(`❌ 未找到 ${guildInfo} 在 ${parsedQuery.timeRange} 的聊天记录`)])
+          await this.sendMessage(session, [h.text(`❌ 未找到 ${guildInfo} 在 ${dateRangeStr} 的聊天记录`)])
           return
         }
 
@@ -1102,7 +1099,7 @@ export class CommandHandler {
         const analysisResult = await this.aiService.analyzeChat(
           chatContent,
           parsedQuery.analysisPrompt,
-          parsedQuery.timeRange,
+          dateRangeStr,
           messageCount,
           targetGuildId || 'private'
         )
@@ -1113,13 +1110,13 @@ export class CommandHandler {
         }
 
         // 发送分析结果
-        const resultHeader = `📊 AI分析结果\n\n` +
-                           `🔍 查询: ${query}\n` +
-                           `📅 时间范围: ${parsedQuery.timeRange}\n` +
-                           `📝 消息数量: ${messageCount} 条\n` +
-                           `\n────────────────\n\n`
+        const resultMessage = `📊 AI分析结果：\n` +
+                            `${analysisResult}\n` +
+                            `────────────────\n` +
+                            `📅 日期: ${dateRangeStr}\n` +
+                            `📝 消息数量: ${messageCount} 条`
 
-        await this.sendMessage(session, [h.text(resultHeader + analysisResult)])
+        await this.sendMessage(session, [h.text(resultMessage)])
 
       } catch (error: any) {
         // 删除分析临时消息
