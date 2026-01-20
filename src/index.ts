@@ -1,7 +1,7 @@
-import { Context, Session } from 'koishi'
+import { Context, Session, h } from 'koishi'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { Config, ChatRecord, ImageRecord, FileRecord, VideoRecord, ChatLogFileRecord } from './types'
+import { Config, ChatRecord, ImageRecord, FileRecord, VideoRecord, ChatLogFileRecord, DailyReport } from './types'
 import { name, inject, ConfigSchema, CONSTANTS } from './config'
 import { extendDatabase, DatabaseOperations } from './database'
 import { LoggerService, S3Service, MessageProcessorService } from './services'
@@ -10,9 +10,11 @@ import { S3Uploader, UploadResult } from './s3-uploader'
 import { SafeFileWriter } from './file-writer'
 import { AIService } from './ai-service'
 import { MarkdownToImageService } from './md-to-image'
-import { 
-  formatDateInUTC8, 
-  getDateStringInUTC8, 
+import { StatisticsService } from './statistics'
+import { CardRenderer } from './card-renderer'
+import {
+  formatDateInUTC8,
+  getDateStringInUTC8,
   getCurrentTimeInUTC8,
   safeJsonParse,
   safeJsonStringify,
@@ -65,9 +67,13 @@ export function apply(ctx: Context, config: Config) {
     }
 
     // 检查群组过滤
-    if (config.monitor.enabledGroups.length > 0) {
-      const enabledGroupIds = config.monitor.enabledGroups.map(group => group.groupId)
-      if (!enabledGroupIds.includes(session.guildId)) {
+    if (config.monitor.groups.length > 0) {
+      const groupConfig = config.monitor.groups.find(group => group.groupId === session.guildId)
+      if (!groupConfig) {
+        return false
+      }
+      // 检查该群组是否启用监控
+      if (groupConfig.monitorEnabled === false) {
         return false
       }
     }
@@ -947,9 +953,134 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 执行自动AI总结生成
+  // 获取群组的有效配置（合并默认值）
+  const getEffectiveGroupConfig = (groupConfig: typeof config.monitor.groups[0]) => {
+    const defaultSummaryTime = config.ai.defaultSummaryTime || '03:00'
+    const defaultPushTime = config.ai.defaultPushTime || defaultSummaryTime
+
+    return {
+      groupId: groupConfig.groupId,
+      name: groupConfig.name,
+      monitorEnabled: groupConfig.monitorEnabled !== false, // 默认 true
+      summaryEnabled: groupConfig.summaryEnabled !== undefined ? groupConfig.summaryEnabled : config.ai.enabled,
+      summaryTime: groupConfig.summaryTime || defaultSummaryTime,
+      pushEnabled: groupConfig.pushEnabled !== false, // 默认 true
+      pushTime: groupConfig.pushTime || groupConfig.summaryTime || defaultPushTime,
+      pushToSelf: groupConfig.pushToSelf !== false, // 默认 true
+      forwardGroups: groupConfig.forwardGroups || [],
+      systemPrompt: groupConfig.systemPrompt,
+      userPromptTemplate: groupConfig.userPromptTemplate
+    }
+  }
+
+  // 执行指定群组的AI总结生成
+  const executeGroupSummary = async (groupId: string): Promise<string | undefined> => {
+    if (!config.ai.enabled) {
+      if (config.debug) {
+        logger.info(`AI总结功能已禁用，跳过群组 ${groupId}`)
+      }
+      return
+    }
+
+    const s3Uploader = s3Service.getUploader()
+    if (!s3Uploader) {
+      logger.error('S3上传器未初始化，无法执行自动总结')
+      return
+    }
+
+    try {
+      // 获取昨天的日期字符串（基于UTC+8时区）
+      const yesterday = getCurrentTimeInUTC8()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const dateStr = getDateStringInUTC8(yesterday.getTime())
+
+      // 获取该群组的聊天记录文件
+      const record = await dbOps.getChatLogFileForRetry(dateStr, groupId)
+
+      if (!record) {
+        if (config.debug) {
+          logger.info(`群组 ${groupId} 在 ${dateStr} 没有需要生成AI总结的记录`)
+        }
+        return
+      }
+
+      // 检查是否已经生成过总结
+      if (record.summaryImageUrl) {
+        if (config.debug) {
+          logger.info(`群组 ${groupId} 在 ${dateStr} 已生成过AI总结，跳过`)
+        }
+        return record.summaryImageUrl
+      }
+
+      logger.info(`开始为群组 ${groupId} 生成AI总结 (${dateStr})`)
+
+      // 生成总结但不自动推送（推送由 pushScheduler 控制）
+      const imageUrl = await generateSummaryForRecord(record, true)
+
+      if (imageUrl) {
+        logger.info(`群组 ${groupId} 的AI总结生成成功: ${imageUrl}`)
+      }
+
+      return imageUrl
+
+    } catch (error: any) {
+      logger.error(`为群组 ${groupId} 执行自动AI总结时发生错误`, error)
+      return
+    }
+  }
+
+  // 执行指定群组的总结推送
+  const executeGroupPush = async (groupId: string): Promise<void> => {
+    const groupConfig = config.monitor.groups.find(g => g.groupId === groupId)
+    if (!groupConfig) {
+      logger.warn(`未找到群组 ${groupId} 的配置，跳过推送`)
+      return
+    }
+
+    const effectiveConfig = getEffectiveGroupConfig(groupConfig)
+    if (!effectiveConfig.pushEnabled) {
+      if (config.debug) {
+        logger.info(`群组 ${groupId} 已禁用推送`)
+      }
+      return
+    }
+
+    try {
+      // 获取昨天的日期字符串
+      const yesterday = getCurrentTimeInUTC8()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const dateStr = getDateStringInUTC8(yesterday.getTime())
+
+      // 获取总结图片URL
+      const summaryImageUrl = await dbOps.getSummaryImageUrl(dateStr, groupId)
+
+      if (!summaryImageUrl) {
+        logger.warn(`群组 ${groupId} 在 ${dateStr} 没有可推送的AI总结图片`)
+        return
+      }
+
+      logger.info(`开始推送群组 ${groupId} 的AI总结`)
+
+      // 推送到本群
+      if (effectiveConfig.pushToSelf) {
+        await pushSummaryToGroup(summaryImageUrl, groupId)
+      }
+
+      // 推送到转发群组
+      if (effectiveConfig.forwardGroups.length > 0) {
+        for (const target of effectiveConfig.forwardGroups) {
+          await pushSummaryToGroup(summaryImageUrl, target.groupId)
+        }
+      }
+
+    } catch (error: any) {
+      logger.error(`推送群组 ${groupId} 的总结失败`, error)
+    }
+  }
+
+  // 执行自动AI总结生成（兼容旧逻辑，用于手动触发）
   const executeAutoSummary = async (): Promise<void> => {
-    if (!config.ai.autoSummaryEnabled || !config.ai.enabled) {
+    if (!config.ai.enabled) {
       if (config.debug) {
         logger.info('自动总结功能已禁用，跳过执行')
       }
@@ -1036,8 +1167,103 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 为单个记录生成AI总结
-  const generateSummaryForRecord = async (record: ChatLogFileRecord): Promise<void> => {
+  // 推送总结图片到群组
+  const pushSummaryToGroup = async (
+    imageUrl: string,
+    groupId: string,
+    channelId?: string,
+    platform?: string
+  ): Promise<boolean> => {
+    const messageElements = [h.image(imageUrl)]
+
+    for (const bot of ctx.bots) {
+      try {
+        // 如果指定了平台，检查 bot 是否匹配
+        if (platform && bot.platform !== platform) {
+          continue
+        }
+
+        // 使用 channelId（如果提供）或 groupId 作为目标
+        const targetId = channelId || groupId
+        await bot.sendMessage(targetId, messageElements)
+
+        logger.info(`成功推送总结到群 ${groupId}${channelId ? ` (频道: ${channelId})` : ''}`)
+        return true
+      } catch (err) {
+        if (config.debug) {
+          logger.warn(`Bot ${bot.sid} 推送到 ${groupId} 失败: ${err}`)
+        }
+      }
+    }
+
+    logger.error(`所有 Bot 均无法推送到群 ${groupId}`)
+    return false
+  }
+
+  // 推送总结到配置的群组（新版本：根据群组配置决定推送目标）
+  const pushSummaryToConfiguredGroups = async (
+    imageUrl: string,
+    sourceGroupId: string | undefined
+  ): Promise<void> => {
+    if (!sourceGroupId) {
+      if (config.debug) {
+        logger.info('源群组ID为空，跳过推送')
+      }
+      return
+    }
+
+    // 查找源群组的配置
+    const groupConfig = config.monitor.groups.find(g => g.groupId === sourceGroupId)
+    if (!groupConfig) {
+      if (config.debug) {
+        logger.info(`群组 ${sourceGroupId} 不在配置列表中，跳过推送`)
+      }
+      return
+    }
+
+    const effectiveConfig = getEffectiveGroupConfig(groupConfig)
+    if (!effectiveConfig.pushEnabled) {
+      if (config.debug) {
+        logger.info(`群组 ${sourceGroupId} 已禁用推送`)
+      }
+      return
+    }
+
+    const targets: string[] = []
+
+    // 推送到本群
+    if (effectiveConfig.pushToSelf) {
+      targets.push(sourceGroupId)
+    }
+
+    // 推送到转发群组
+    if (effectiveConfig.forwardGroups.length > 0) {
+      for (const target of effectiveConfig.forwardGroups) {
+        targets.push(target.groupId)
+      }
+    }
+
+    if (targets.length === 0) {
+      if (config.debug) {
+        logger.info(`群组 ${sourceGroupId} 没有配置推送目标`)
+      }
+      return
+    }
+
+    logger.info(`开始推送群组 ${sourceGroupId} 的总结到 ${targets.length} 个目标`)
+
+    for (const targetGroupId of targets) {
+      try {
+        await pushSummaryToGroup(imageUrl, targetGroupId)
+      } catch (error: any) {
+        logger.error(`推送到群组 ${targetGroupId} 失败`, error)
+      }
+    }
+  }
+
+  // 为单个记录生成AI总结，返回生成的图片URL
+  // skipPush: 是否跳过自动推送到群组（手动 retry 时应设为 true）
+  const generateSummaryForRecord = async (record: ChatLogFileRecord, skipPush: boolean = false): Promise<string | undefined> => {
     if (!record.s3Url) {
       logger.warn(`记录 ${record.id} 没有S3 URL，跳过`)
       return
@@ -1051,45 +1277,72 @@ export function apply(ctx: Context, config: Config) {
 
     try {
       const groupInfo = record.guildId ? `群组 ${record.guildId}` : '私聊'
-      logger.info(`正在为 ${groupInfo} 生成AI总结 (${record.date})`)
+      logger.info(`正在为 ${groupInfo} 生成增强版AI总结 (${record.date})`)
 
-             // 下载聊天记录内容
-       const response = await ctx.http.get(record.s3Url, {
-         timeout: 30000,
-         responseType: 'text'
-       })
+      // 1. 下载聊天记录内容
+      const response = await ctx.http.get(record.s3Url, {
+        timeout: 30000,
+        responseType: 'text'
+      })
 
-       if (!response) {
-         throw new Error('无法下载聊天记录文件')
-       }
+      if (!response) {
+        throw new Error('无法下载聊天记录文件')
+      }
 
-       // 解析聊天记录并过滤只保留文本消息
-       const filteredContent = await filterMessagesForSummary(response)
+      // 2. 初始化服务
+      const statisticsService = new StatisticsService(ctx.logger('chat-summarizer:statistics'))
+      const aiService = new AIService(ctx, config)
+      const cardRenderer = new CardRenderer(ctx)
 
-       // 初始化AI服务和图片服务
-       const aiService = new AIService(ctx, config)
-       const mdToImageService = new MarkdownToImageService(ctx)
+      // 3. 解析消息并生成统计数据
+      const messages = statisticsService.parseMessages(response)
+      const statistics = statisticsService.generateStatistics(messages, 10)
 
-       // 生成AI总结
-       const summary = await aiService.generateSummary(
-         filteredContent,
-         'yesterday',
-         record.recordCount,
-         record.guildId || 'private'
-       )
+      logger.info(`统计完成: ${statistics.basicStats.totalMessages} 条消息, ${statistics.basicStats.uniqueUsers} 位用户`)
 
-      // 生成总结图片
-      const imageBuffer = await mdToImageService.convertToImage(summary)
+      // 4. 过滤文本消息用于AI分析
+      const filteredContent = await filterMessagesForSummary(response)
 
-      // 上传图片到S3
+      // 5. 生成结构化AI总结
+      const aiContent = await aiService.generateStructuredSummary(
+        filteredContent,
+        record.date,
+        statistics.basicStats.totalMessages,
+        record.guildId || 'private',
+        statistics.basicStats.uniqueUsers
+      )
+
+      // 6. 组装完整的 DailyReport
+      const dailyReport: DailyReport = {
+        date: record.date,
+        guildId: record.guildId || 'private',
+        aiContent,
+        statistics,
+        metadata: {
+          generatedAt: Date.now(),
+          aiModel: config.ai.model || 'gpt-3.5-turbo'
+        }
+      }
+
+      // 7. 渲染卡片式图片
+      const imageBuffer = await cardRenderer.renderDailyReport(dailyReport)
+
+      // 8. 上传图片到S3
       const imageKey = `summary-images/${record.date}/${record.guildId || 'private'}_${record.id}_${Date.now()}.png`
       const uploadResult = await s3Uploader.uploadBuffer(imageBuffer, imageKey, 'image/png')
 
       if (uploadResult.success && uploadResult.url) {
         // 更新数据库记录
         await dbOps.updateChatLogFileSummaryImage(record.id!, uploadResult.url)
-        
-        logger.info(`✅ ${groupInfo} AI总结生成成功: ${uploadResult.url}`)
+
+        logger.info(`✅ ${groupInfo} 增强版AI总结生成成功: ${uploadResult.url}`)
+
+        // 推送总结到配置的群组（手动 retry 时跳过推送）
+        if (!skipPush) {
+          await pushSummaryToConfiguredGroups(uploadResult.url, record.guildId)
+        }
+
+        return uploadResult.url
       } else {
         throw new Error(`图片上传失败: ${uploadResult.error}`)
       }
@@ -1100,34 +1353,138 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
-  // 自动总结调度器
-  let summaryScheduler: NodeJS.Timeout | null = null
+  // 多时间点调度器：按时间分组的定时器
+  const schedulers: Map<string, NodeJS.Timeout> = new Map()
 
-  // 设置自动总结任务
-  const scheduleAutoSummary = (): void => {
-    if (!config.ai.autoSummaryEnabled || !config.ai.autoSummaryTime) {
+  // 清理所有调度器
+  const clearAllSchedulers = (): void => {
+    for (const [time, timeout] of schedulers.entries()) {
+      clearTimeout(timeout)
       if (config.debug) {
-        logger.info('自动总结功能未启用，跳过调度')
+        logger.info(`已清理 ${time} 的调度器`)
+      }
+    }
+    schedulers.clear()
+  }
+
+  // 获取所有配置的时间点及其对应的群组
+  const getScheduleTimePoints = (): Map<string, { summaryGroups: string[], pushGroups: string[] }> => {
+    const timePoints = new Map<string, { summaryGroups: string[], pushGroups: string[] }>()
+
+    for (const groupConfig of config.monitor.groups) {
+      const effective = getEffectiveGroupConfig(groupConfig)
+
+      // 如果启用了总结功能
+      if (effective.summaryEnabled) {
+        const summaryTime = effective.summaryTime
+        if (!timePoints.has(summaryTime)) {
+          timePoints.set(summaryTime, { summaryGroups: [], pushGroups: [] })
+        }
+        timePoints.get(summaryTime)!.summaryGroups.push(effective.groupId)
+      }
+
+      // 如果启用了推送功能
+      if (effective.pushEnabled) {
+        const pushTime = effective.pushTime
+        if (!timePoints.has(pushTime)) {
+          timePoints.set(pushTime, { summaryGroups: [], pushGroups: [] })
+        }
+        timePoints.get(pushTime)!.pushGroups.push(effective.groupId)
+      }
+    }
+
+    return timePoints
+  }
+
+  // 为单个时间点设置调度器
+  const scheduleTimePoint = (time: string, tasks: { summaryGroups: string[], pushGroups: string[] }): void => {
+    // 清除旧的同时间调度器
+    if (schedulers.has(time)) {
+      clearTimeout(schedulers.get(time)!)
+    }
+
+    const nextExecution = getNextExecutionTime(time)
+    const delay = nextExecution.getTime() - Date.now()
+
+    if (config.debug) {
+      const summaryInfo = tasks.summaryGroups.length > 0 ? `总结: ${tasks.summaryGroups.join(', ')}` : ''
+      const pushInfo = tasks.pushGroups.length > 0 ? `推送: ${tasks.pushGroups.join(', ')}` : ''
+      const taskInfo = [summaryInfo, pushInfo].filter(Boolean).join(' | ')
+      logger.info(`调度 ${time}: ${taskInfo} (下次执行: ${nextExecution.toLocaleString('zh-CN')})`)
+    }
+
+    const timeout = setTimeout(async () => {
+      logger.info(`执行 ${time} 的定时任务`)
+
+      // 执行总结任务
+      if (tasks.summaryGroups.length > 0) {
+        for (const groupId of tasks.summaryGroups) {
+          try {
+            await executeGroupSummary(groupId)
+          } catch (error: any) {
+            logger.error(`群组 ${groupId} 总结生成失败`, error)
+          }
+        }
+      }
+
+      // 执行推送任务
+      if (tasks.pushGroups.length > 0) {
+        for (const groupId of tasks.pushGroups) {
+          try {
+            await executeGroupPush(groupId)
+          } catch (error: any) {
+            logger.error(`群组 ${groupId} 推送失败`, error)
+          }
+        }
+      }
+
+      // 重新调度下一天
+      scheduleTimePoint(time, tasks)
+    }, delay)
+
+    schedulers.set(time, timeout)
+  }
+
+  // 设置所有自动总结和推送任务
+  const scheduleAllTasks = (): void => {
+    if (!config.ai.enabled) {
+      if (config.debug) {
+        logger.info('AI功能未启用，跳过调度')
       }
       return
     }
 
-    if (summaryScheduler) {
-      clearTimeout(summaryScheduler)
+    if (config.monitor.groups.length === 0) {
+      if (config.debug) {
+        logger.info('没有配置群组，跳过调度')
+      }
+      return
     }
 
-    const nextExecution = getNextExecutionTime(config.ai.autoSummaryTime)
-    const delay = nextExecution.getTime() - Date.now()
+    // 清除所有现有调度器
+    clearAllSchedulers()
 
-    if (config.debug) {
-      logger.info(`下次自动AI总结时间: ${nextExecution.toLocaleString('zh-CN')}`)
+    // 获取所有时间点
+    const timePoints = getScheduleTimePoints()
+
+    if (timePoints.size === 0) {
+      if (config.debug) {
+        logger.info('没有需要调度的任务')
+      }
+      return
     }
 
-    summaryScheduler = setTimeout(async () => {
-      await executeAutoSummary()
-      // 设置下一次执行
-      scheduleAutoSummary()
-    }, delay)
+    // 为每个时间点设置调度器
+    for (const [time, tasks] of timePoints.entries()) {
+      scheduleTimePoint(time, tasks)
+    }
+
+    logger.info(`已设置 ${timePoints.size} 个时间点的定时任务`)
+  }
+
+  // 兼容旧版本的调度函数（保留供外部调用）
+  const scheduleAutoSummary = (): void => {
+    scheduleAllTasks()
   }
 
   // 初始化插件
@@ -1160,22 +1517,31 @@ export function apply(ctx: Context, config: Config) {
         setTimeout(() => executeDatabaseCleanup(), 5000) // 延迟5秒启动，避免启动时资源竞争
       }
       
-      // 启动自动AI总结任务
-      if (config.ai.enabled && config.ai.autoSummaryEnabled && s3Service.getUploader()) {
-        scheduleAutoSummary()
+      // 启动自动AI总结和推送任务（新版本调度器）
+      if (config.ai.enabled && s3Service.getUploader() && config.monitor.groups.length > 0) {
+        scheduleAllTasks()
       }
-      
+
       // 显示初始化状态
       if (config.debug) {
         logger.info('插件初始化完成 (调试模式已开启)')
         logger.info(`数据库记录保留时间: ${config.chatLog.dbRetentionHours} 小时`)
-        if (config.ai.autoSummaryEnabled) {
-          logger.info(`自动AI总结已启用，执行时间: ${config.ai.autoSummaryTime}`)
+
+        // 显示每个群组的配置
+        for (const groupConfig of config.monitor.groups) {
+          const effective = getEffectiveGroupConfig(groupConfig)
+          const groupName = effective.name ? `${effective.name}(${effective.groupId})` : effective.groupId
+          logger.info(`群组 ${groupName}: 监控=${effective.monitorEnabled}, 总结=${effective.summaryEnabled}@${effective.summaryTime}, 推送=${effective.pushEnabled}@${effective.pushTime}`)
         }
       } else {
         logger.info('插件初始化完成')
-        if (config.ai.autoSummaryEnabled) {
-          logger.info(`自动AI总结已启用，执行时间: ${config.ai.autoSummaryTime}`)
+        if (config.monitor.groups.length > 0) {
+          const summaryEnabledGroups = config.monitor.groups.filter(g =>
+            getEffectiveGroupConfig(g).summaryEnabled
+          ).length
+          if (summaryEnabledGroups > 0) {
+            logger.info(`自动AI总结已启用，${summaryEnabledGroups} 个群组已配置`)
+          }
         }
       }
       
@@ -1258,11 +1624,10 @@ export function apply(ctx: Context, config: Config) {
       clearInterval(cleanupScheduler)
       cleanupScheduler = null
     }
-    if (summaryScheduler) {
-      clearTimeout(summaryScheduler)
-      summaryScheduler = null
-    }
-    
+
+    // 清理所有多时间点调度器
+    clearAllSchedulers()
+
     // 等待所有文件写入操作完成并清理资源
     try {
       await fileWriter.flush()
@@ -1271,7 +1636,7 @@ export function apply(ctx: Context, config: Config) {
     } catch (error: any) {
       logger.error('等待文件写入完成时发生错误', error)
     }
-    
-    logger.info('聊天记录插件已卸载，已清理所有定时任务（包括自动总结调度器）')
+
+    logger.info('聊天记录插件已卸载，已清理所有定时任务')
   })
 } 

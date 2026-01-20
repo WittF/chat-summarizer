@@ -1,9 +1,37 @@
+// 转发目标群组配置接口
+export interface ForwardTarget {
+  groupId: string                  // 群组 ID
+  name?: string                    // 群组名称标识（方便管理）
+}
+
 // 群组配置接口
 export interface GroupConfig {
-  groupId: string                  // 群组ID
-  systemPrompt?: string           // 该群组专用的系统提示词（可选）
-  userPromptTemplate?: string     // 该群组专用的用户提示词模板（可选）
-  enabled?: boolean               // 是否启用该群组的AI总结（可选，默认继承全局配置）
+  groupId: string                  // 群组ID (必需)
+  name?: string                    // 群组名称标识（方便管理）
+
+  // 监控配置
+  monitorEnabled?: boolean         // 是否监控消息（默认true）
+
+  // 总结配置
+  summaryEnabled?: boolean         // 是否生成AI总结（默认继承全局）
+  summaryTime?: string             // 生成时间 HH:mm（默认继承全局）
+
+  // 推送配置
+  pushEnabled?: boolean            // 是否启用推送（默认true）
+  pushTime?: string                // 推送时间 HH:mm（默认=summaryTime）
+  pushToSelf?: boolean             // 推回本群（默认true）
+  forwardGroups?: ForwardTarget[]  // 额外转发群组
+
+  // AI覆盖配置
+  systemPrompt?: string            // 该群组专用的系统提示词（可选）
+  userPromptTemplate?: string      // 该群组专用的用户提示词模板（可选）
+}
+
+// 兼容旧配置的推送目标群组配置接口（已废弃，保留用于迁移）
+export interface PushGroupConfig {
+  groupId: string                  // 群组 ID
+  channelId?: string              // 频道 ID（可选）
+  platform?: string               // 平台（可选，如 onebot）
 }
 
 export interface Config {
@@ -29,7 +57,7 @@ export interface Config {
   
   // 监控配置
   monitor: {
-    enabledGroups: GroupConfig[]  // 监控的群组配置列表（空则监控所有群组）
+    groups: GroupConfig[]         // 群组配置列表（空则监控所有群组）
     excludedUsers: string[]       // 不监控的用户QQ号列表
     excludeBots: boolean          // 是否排除机器人消息
   }
@@ -51,8 +79,10 @@ export interface Config {
     userPromptTemplate?: string // 用户提示词模板（可选）
     useFileMode?: boolean   // 是否使用文件模式发送聊天记录（可选）
     fileName?: string       // 文件模式下的文件名（可选）
-    autoSummaryEnabled?: boolean // 是否启用自动总结功能（可选）
-    autoSummaryTime?: string // 自动总结时间（HH:mm格式，可选）
+
+    // 全局默认时间（群组未配置时使用）
+    defaultSummaryTime?: string  // 默认总结生成时间 HH:mm（默认 "03:00"）
+    defaultPushTime?: string     // 默认推送时间 HH:mm（默认与summaryTime相同）
   }
   
   // 调试配置
@@ -136,6 +166,73 @@ export interface PluginStats {
   todayMessages: number
   imageRecords: number
   uploadedMessages: number
+}
+
+// ========== AI 结构化输出类型 ==========
+
+// AI 输出的结构化 JSON
+export interface AISummaryOutput {
+  summary: {
+    overview: string        // 整体概述
+    highlights: string[]    // 要点列表
+    atmosphere: string      // 氛围描述
+  }
+  hotTopics: Array<{
+    topic: string
+    description: string
+    participants: string[]
+    heatLevel: 'high' | 'medium' | 'low'
+  }>
+  importantInfo: Array<{
+    type: 'announcement' | 'link' | 'resource' | 'decision' | 'other'
+    content: string
+    source?: string
+  }>
+  quotes: Array<{
+    content: string
+    author: string
+  }>
+}
+
+// 代码统计的互动数据
+export interface InteractionStatistics {
+  activityRanking: Array<{ username: string; messageCount: number; rank: number }>
+  hourlyDistribution: Array<{ hour: number; count: number; percentage: number }>
+  interactions: {
+    mentions: Array<{ from: string; to: string; count: number }>
+    replies: Array<{ from: string; to: string; count: number }>
+  }
+  basicStats: {
+    totalMessages: number
+    uniqueUsers: number
+    avgMessagesPerUser: number
+    peakHour: number
+  }
+}
+
+// 完整群日报数据
+export interface DailyReport {
+  date: string
+  guildId: string
+  aiContent: AISummaryOutput
+  statistics: InteractionStatistics
+  metadata: { generatedAt: number; aiModel: string }
+}
+
+// 解析后的消息结构（用于统计服务）
+export interface ParsedMessage {
+  timestamp: number
+  time: string
+  messageId: string
+  guildId?: string
+  channelId: string
+  userId: string
+  username: string
+  content: string
+  messageType: string
+  imageUrls: string[]
+  fileUrls: string[]
+  videoUrls: string[]
 }
 
 // 扩展数据库模型类型

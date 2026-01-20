@@ -1,2 +1,6 @@
 .DS_Store
 tsconfig.tsbuildinfo
+
+# Font files (too large for npm, ~97MB)
+lib/assets/
+src/assets/

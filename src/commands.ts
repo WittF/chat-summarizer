@@ -21,7 +21,7 @@ export class CommandHandler {
     private s3Uploader: S3Uploader | null,
     private getStorageDir: (subDir: string) => string,
     private getNextExecutionTime: (targetTime: string) => Date,
-    private generateSummaryForRecord: (record: any) => Promise<void>
+    private generateSummaryForRecord: (record: any, skipPush?: boolean) => Promise<string | undefined>
   ) {
     this.exportManager = new ExportManager(ctx, s3Uploader, getStorageDir)
     this.aiService = new AIService(ctx, config)
@@ -270,21 +270,34 @@ export class CommandHandler {
       statusText += `• API地址: ${this.config.ai.apiUrl || '未配置'}\n`
       statusText += `• 模型: ${this.config.ai.model || 'gpt-3.5-turbo'}\n`
       statusText += `• 最大Token: ${this.config.ai.maxTokens || 2000}\n`
+      statusText += `• 默认总结时间: ${this.config.ai.defaultSummaryTime || '03:00'}\n`
+      statusText += `• 默认推送时间: ${this.config.ai.defaultPushTime || this.config.ai.defaultSummaryTime || '03:00'}\n`
       statusText += `• 连接状态: ${this.aiService.isEnabled() ? '✅ 已配置' : '❌ 未配置'}\n`
     }
     
     // 监控配置
     statusText += '\n👁️ 监控配置:\n'
-    const groupInfo = this.config.monitor.enabledGroups.length > 0 
-      ? this.config.monitor.enabledGroups.map(group => {
-          const parts = [group.groupId]
-          if (group.systemPrompt) parts.push('(自定义系统提示)')
-          if (group.userPromptTemplate) parts.push('(自定义用户模板)')
-          if (group.enabled !== undefined) parts.push(group.enabled ? '(AI启用)' : '(AI禁用)')
-          return parts.join('')
-        }).join(', ')
-      : '所有群组'
-    statusText += `• 监控群组: ${groupInfo}\n`
+    if (this.config.monitor.groups.length > 0) {
+      statusText += `• 配置群组数: ${this.config.monitor.groups.length}\n`
+      for (const group of this.config.monitor.groups) {
+        const groupName = group.name ? `${group.name}(${group.groupId})` : group.groupId
+        const parts: string[] = []
+        if (group.monitorEnabled === false) parts.push('监控关')
+        if (group.summaryEnabled === false) parts.push('总结关')
+        else if (group.summaryTime) parts.push(`总结@${group.summaryTime}`)
+        if (group.pushEnabled === false) parts.push('推送关')
+        else if (group.pushTime) parts.push(`推送@${group.pushTime}`)
+        if (group.pushToSelf === false) parts.push('不推本群')
+        if (group.forwardGroups && group.forwardGroups.length > 0) {
+          parts.push(`转发到${group.forwardGroups.length}群`)
+        }
+        if (group.systemPrompt) parts.push('自定义提示')
+        const partsStr = parts.length > 0 ? ` (${parts.join(', ')})` : ''
+        statusText += `  - ${groupName}${partsStr}\n`
+      }
+    } else {
+      statusText += `• 监控群组: 所有群组（未配置自动总结）\n`
+    }
     statusText += `• 排除用户: ${this.config.monitor.excludedUsers.length > 0 ? this.config.monitor.excludedUsers.join(', ') : '无'}\n`
     statusText += `• 排除机器人: ${this.config.monitor.excludeBots ? '✅ 是' : '❌ 否'}\n`
     
@@ -657,14 +670,22 @@ export class CommandHandler {
           await this.dbOps.clearSummaryImage(record.id!)
         }
 
-        await this.generateSummaryForRecord(record)
-        
+        // 手动 retry 时跳过自动推送到群组
+        const imageUrl = await this.generateSummaryForRecord(record, true)
+
         if (tempMessage && tempMessage[0]) {
           await session.bot.deleteMessage(session.channelId, tempMessage[0])
         }
 
         const groupInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
-        await this.sendMessage(session, [h.text(`✅ ${groupInfo} 在 ${date} 的AI总结重新生成完成`)])
+        if (imageUrl) {
+          await this.sendMessage(session, [
+            h.text(`✅ ${groupInfo} 在 ${date} 的AI总结重新生成完成\n\n`),
+            h.image(imageUrl)
+          ])
+        } else {
+          await this.sendMessage(session, [h.text(`✅ ${groupInfo} 在 ${date} 的AI总结重新生成完成`)])
+        }
       } else {
         // 处理该日期的所有群组
         const allRecords = await this.dbOps.getChatLogFilesForSummary(date)
@@ -678,6 +699,7 @@ export class CommandHandler {
 
         let successCount = 0
         let totalCount = allRecords.length
+        const generatedUrls: Array<{ guildId: string | undefined; url: string }> = []
 
         for (const record of allRecords) {
           try {
@@ -685,8 +707,12 @@ export class CommandHandler {
             if (record.summaryImageUrl) {
               await this.dbOps.clearSummaryImage(record.id!)
             }
-            await this.generateSummaryForRecord(record)
+            // 手动 retry 时跳过自动推送到群组
+            const imageUrl = await this.generateSummaryForRecord(record, true)
             successCount++
+            if (imageUrl) {
+              generatedUrls.push({ guildId: record.guildId, url: imageUrl })
+            }
           } catch (error: any) {
             console.error(`重新生成总结失败 (${record.guildId || 'private'}):`, error)
           }
@@ -696,7 +722,19 @@ export class CommandHandler {
           await session.bot.deleteMessage(session.channelId, tempMessage[0])
         }
 
-        await this.sendMessage(session, [h.text(`✅ ${date} 的AI总结重新生成完成：${successCount}/${totalCount} 个成功`)])
+        // 构建消息：文本 + 所有生成的图片
+        const messageElements: any[] = [
+          h.text(`✅ ${date} 的AI总结重新生成完成：${successCount}/${totalCount} 个成功\n\n`)
+        ]
+
+        for (const item of generatedUrls) {
+          const groupInfo = item.guildId ? `群组 ${item.guildId}` : '私聊'
+          messageElements.push(h.text(`📸 ${groupInfo}:\n`))
+          messageElements.push(h.image(item.url))
+          messageElements.push(h.text('\n'))
+        }
+
+        await this.sendMessage(session, messageElements)
       }
 
     } catch (error: any) {

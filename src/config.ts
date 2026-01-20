@@ -1,5 +1,5 @@
 import { Schema } from 'koishi'
-import { Config, GroupConfig } from './types'
+import { Config, GroupConfig, ForwardTarget } from './types'
 
 export const name = 'chat-summarizer'
 export const inject = { required: ['database', 'http', 'puppeteer'] }
@@ -50,20 +50,55 @@ export const ConfigSchema: Schema<Config> = Schema.object({
   }).description('S3兼容云存储配置'),
   
   monitor: Schema.object({
-    enabledGroups: Schema.array(Schema.object({
+    groups: Schema.array(Schema.object({
       groupId: Schema.string()
-        .description('群组ID')
+        .description('群组ID（必需）')
         .required(),
+      name: Schema.string()
+        .description('群组名称标识（方便管理，可选）'),
+
+      // 监控配置
+      monitorEnabled: Schema.boolean()
+        .description('是否监控消息（默认true）')
+        .default(true),
+
+      // 总结配置
+      summaryEnabled: Schema.boolean()
+        .description('是否生成AI总结（默认继承全局AI配置）'),
+      summaryTime: Schema.string()
+        .description('生成总结时间 HH:mm（默认继承全局 defaultSummaryTime）')
+        .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/),
+
+      // 推送配置
+      pushEnabled: Schema.boolean()
+        .description('是否启用推送（默认true）')
+        .default(true),
+      pushTime: Schema.string()
+        .description('推送时间 HH:mm（默认与 summaryTime 相同）')
+        .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/),
+      pushToSelf: Schema.boolean()
+        .description('推送回本群（默认true）')
+        .default(true),
+      forwardGroups: Schema.array(Schema.object({
+        groupId: Schema.string()
+          .description('转发目标群组ID')
+          .required(),
+        name: Schema.string()
+          .description('目标群组名称标识（可选）')
+      }))
+        .description('额外转发到的群组列表')
+        .default([]),
+
+      // AI覆盖配置
       systemPrompt: Schema.string()
         .role('textarea', { rows: 8 })
         .description('该群组专用的系统提示词（可选，留空则使用全局配置）'),
       userPromptTemplate: Schema.string()
         .role('textarea', { rows: 6 })
-        .description('该群组专用的用户提示词模板（可选，留空则使用全局配置）'),
-      enabled: Schema.boolean()
-        .description('是否为该群组启用AI总结（可选，留空则继承全局AI配置）')
+        .description('该群组专用的用户提示词模板（可选，留空则使用全局配置）')
     }))
-      .description('监控的群组配置列表（空则监控所有群组）')
+      .description('群组配置列表（空则监控所有群组，不自动生成总结）')
+      .role('table')
       .default([]),
     excludedUsers: Schema.array(Schema.string())
       .description('不监控的用户QQ号列表')
@@ -146,19 +181,71 @@ export const ConfigSchema: Schema<Config> = Schema.object({
     fileName: Schema.string()
       .description('文件模式下的文件名（仅用于提示，如：chat-log.txt）')
       .default('chat-log.txt'),
-    autoSummaryEnabled: Schema.boolean()
-      .description('是否启用自动总结功能（每日自动生成AI总结缩略图）')
-      .default(false),
-    autoSummaryTime: Schema.string()
-      .description('自动总结时间（HH:mm格式，如：03:00）')
+
+    // 全局默认时间配置
+    defaultSummaryTime: Schema.string()
+      .description('默认总结生成时间（HH:mm格式，群组未单独配置时使用）')
       .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)
-      .default('03:00')
+      .default('03:00'),
+    defaultPushTime: Schema.string()
+      .description('默认推送时间（HH:mm格式，留空则与 defaultSummaryTime 相同）')
+      .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)
   }).description('AI总结配置'),
   
   debug: Schema.boolean()
     .description('是否启用调试模式')
     .default(false)
 })
+
+// 结构化 AI 输出的系统提示词
+export const STRUCTURED_SYSTEM_PROMPT = `你是专业的群聊记录分析助手。你需要分析聊天记录并输出结构化的JSON数据。
+
+你必须且只能输出以下JSON格式，不要添加任何解释性文字、代码块标记或其他内容：
+{
+  "summary": {
+    "overview": "30-50字的整体概述，描述今天群内的主要活动和氛围",
+    "highlights": ["要点1", "要点2", "要点3"],
+    "atmosphere": "用2-4个词描述群内氛围，如：轻松愉快、热烈讨论、温馨互助等"
+  },
+  "hotTopics": [
+    {
+      "topic": "话题名称",
+      "description": "简短描述该话题的内容",
+      "participants": ["参与者1", "参与者2"],
+      "heatLevel": "high/medium/low"
+    }
+  ],
+  "importantInfo": [
+    {
+      "type": "announcement/link/resource/decision/other",
+      "content": "重要信息内容",
+      "source": "信息来源（可选）"
+    }
+  ],
+  "quotes": [
+    {
+      "content": "有趣或精彩的发言内容",
+      "author": "发言人"
+    }
+  ]
+}
+
+分析要求：
+1. summary.overview - 30-50字整体概述，用词要生动但清晰
+2. summary.highlights - 3-5个要点，每个要点一句话
+3. summary.atmosphere - 描述群内氛围的简短词组
+4. hotTopics - 按热度排序，最多5个，heatLevel根据讨论热度判断
+5. importantInfo - 提取公告、重要决定等，没有则返回空数组
+6. quotes - 最有趣/精彩/有哲理的发言，最多5句，没有则返回空数组
+
+重要注意事项：
+- 严格按JSON格式输出，确保JSON语法正确
+- 不要在JSON前后添加任何文字说明
+- 不要使用markdown代码块包裹JSON
+- 如果聊天内容较少，各字段可以精简但结构必须完整
+- 保护隐私，不透露敏感个人信息
+- **importantInfo的content字段必须是对信息的描述，禁止直接放入原始URL链接或图片标记**
+- **不要把纯链接、纯图片当作重要信息，只提取有实际内容描述的信息**`
 
 // 常量定义
 export const CONSTANTS = {

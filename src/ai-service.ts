@@ -1,6 +1,7 @@
 import { Context, Logger } from 'koishi'
-import { Config } from './types'
+import { Config, AISummaryOutput } from './types'
 import { handleError } from './utils'
+import { STRUCTURED_SYSTEM_PROMPT } from './config'
 
 export class AIService {
   private logger: Logger
@@ -26,14 +27,14 @@ export class AIService {
     userPromptTemplate?: string
     enabled?: boolean
   } {
-    const groupConfig = this.globalConfig.monitor.enabledGroups.find(
+    const groupConfig = this.globalConfig.monitor.groups.find(
       group => group.groupId === guildId
     )
-    
+
     return {
       systemPrompt: groupConfig?.systemPrompt || this.config.systemPrompt,
       userPromptTemplate: groupConfig?.userPromptTemplate || this.config.userPromptTemplate,
-      enabled: groupConfig?.enabled !== undefined ? groupConfig.enabled : this.config.enabled
+      enabled: groupConfig?.summaryEnabled !== undefined ? groupConfig.summaryEnabled : this.config.enabled
     }
   }
 
@@ -664,6 +665,240 @@ ${content}
         stack: error.stack
       })
       throw new Error(`分析失败: ${error.message}`)
+    }
+  }
+
+  /**
+   * 生成结构化的 AI 总结
+   * 返回固定格式的 JSON 数据，由前端代码负责渲染
+   */
+  async generateStructuredSummary(
+    content: string,
+    timeRange: string,
+    messageCount: number,
+    guildId: string,
+    uniqueUsers: number
+  ): Promise<AISummaryOutput> {
+    if (!this.isEnabled(guildId)) {
+      throw new Error('AI总结功能未启用或该群组已禁用AI功能')
+    }
+
+    if (!this.config.apiUrl || !this.config.apiKey) {
+      throw new Error('AI配置不完整，请检查API URL和密钥')
+    }
+
+    const maxRetries = 2
+    let lastError: Error | null = null
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const groupInfo = this.getGroupInfo(guildId)
+
+        const userPrompt = `请分析以下群聊天记录，并输出结构化JSON：
+
+📊 基本信息：
+- 时间范围：${timeRange}
+- 消息数量：${messageCount} 条
+- 参与人数：${uniqueUsers} 人
+- 聊天群组：${groupInfo}
+
+💬 聊天内容：
+${content}
+
+请严格按照系统提示词要求的JSON格式输出分析结果。`
+
+        const requestBody: any = {
+          model: this.config.model || 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: STRUCTURED_SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.5, // 降低温度以获得更稳定的 JSON 输出
+          stream: false
+        }
+
+        if (this.config.maxTokens && this.config.maxTokens > 0) {
+          requestBody.max_tokens = this.config.maxTokens
+        }
+
+        this.logger.debug(`发送结构化总结请求 (尝试 ${attempt}/${maxRetries})`, {
+          url: this.config.apiUrl,
+          model: requestBody.model,
+          contentLength: content.length
+        })
+
+        const timeoutMs = Math.max((this.config.timeout || 120) * 1000, 120000)
+
+        const response = await this.ctx.http.post(this.config.apiUrl, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.config.apiKey}`
+          },
+          timeout: timeoutMs
+        })
+
+        if (!response) {
+          throw new Error('AI接口未返回响应')
+        }
+
+        // 提取响应内容
+        let responseContent: string = ''
+
+        if (response.choices && response.choices.length > 0) {
+          const choice = response.choices[0]
+          if (choice.message && choice.message.content) {
+            responseContent = choice.message.content.trim()
+          } else if (choice.text) {
+            responseContent = choice.text.trim()
+          }
+        } else if (response.content) {
+          responseContent = response.content.trim()
+        } else if (response.message) {
+          responseContent = response.message.trim()
+        } else if (response.text) {
+          responseContent = response.text.trim()
+        }
+
+        if (!responseContent) {
+          throw new Error('AI响应内容为空')
+        }
+
+        // 解析 JSON 响应
+        const parsed = this.parseStructuredResponse(responseContent)
+
+        this.logger.info('结构化AI总结生成成功', {
+          inputLength: content.length,
+          hotTopicsCount: parsed.hotTopics.length,
+          quotesCount: parsed.quotes.length
+        })
+
+        return parsed
+
+      } catch (error: any) {
+        lastError = error
+        this.logger.warn(`结构化总结生成失败 (尝试 ${attempt}/${maxRetries})`, {
+          error: error.message
+        })
+
+        if (attempt < maxRetries) {
+          // 等待一会儿再重试
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        }
+      }
+    }
+
+    // 所有重试都失败，返回默认结构
+    this.logger.error('结构化总结生成最终失败，使用默认结构', {
+      error: lastError?.message
+    })
+
+    return this.getDefaultAISummaryOutput()
+  }
+
+  /**
+   * 解析结构化响应
+   */
+  private parseStructuredResponse(content: string): AISummaryOutput {
+    try {
+      // 尝试提取 JSON（可能被包裹在 markdown 代码块中）
+      let jsonStr = content
+
+      // 移除可能的 markdown 代码块标记
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/)
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim()
+      } else {
+        // 尝试直接找到 JSON 对象
+        const objMatch = content.match(/\{[\s\S]*\}/)
+        if (objMatch) {
+          jsonStr = objMatch[0]
+        }
+      }
+
+      const parsed = JSON.parse(jsonStr)
+
+      // 验证并补全必需字段
+      return this.validateAndNormalizeOutput(parsed)
+
+    } catch (parseError) {
+      this.logger.error('解析AI结构化响应失败', {
+        content: content.substring(0, 500),
+        error: parseError.message
+      })
+      throw new Error(`JSON解析失败: ${parseError.message}`)
+    }
+  }
+
+  /**
+   * 验证并规范化输出结构
+   */
+  private validateAndNormalizeOutput(parsed: any): AISummaryOutput {
+    // 确保 summary 字段存在
+    const summary = parsed.summary || {}
+
+    const output: AISummaryOutput = {
+      summary: {
+        overview: summary.overview || '今日群内互动平稳，主要以日常交流为主。',
+        highlights: Array.isArray(summary.highlights) ? summary.highlights : [],
+        atmosphere: summary.atmosphere || '轻松日常'
+      },
+      hotTopics: [],
+      importantInfo: [],
+      quotes: []
+    }
+
+    // 处理 hotTopics
+    if (Array.isArray(parsed.hotTopics)) {
+      output.hotTopics = parsed.hotTopics
+        .filter((t: any) => t && t.topic)
+        .map((t: any) => ({
+          topic: t.topic || '',
+          description: t.description || '',
+          participants: Array.isArray(t.participants) ? t.participants : [],
+          heatLevel: ['high', 'medium', 'low'].includes(t.heatLevel) ? t.heatLevel : 'medium'
+        }))
+        .slice(0, 5)
+    }
+
+    // 处理 importantInfo
+    if (Array.isArray(parsed.importantInfo)) {
+      output.importantInfo = parsed.importantInfo
+        .filter((i: any) => i && i.content)
+        .map((i: any) => ({
+          type: ['announcement', 'link', 'resource', 'decision', 'other'].includes(i.type) ? i.type : 'other',
+          content: i.content || '',
+          source: i.source
+        }))
+        .slice(0, 10)
+    }
+
+    // 处理 quotes
+    if (Array.isArray(parsed.quotes)) {
+      output.quotes = parsed.quotes
+        .filter((q: any) => q && q.content && q.author)
+        .map((q: any) => ({
+          content: q.content || '',
+          author: q.author || '匿名'
+        }))
+        .slice(0, 5)
+    }
+
+    return output
+  }
+
+  /**
+   * 获取默认的 AI 总结输出
+   */
+  private getDefaultAISummaryOutput(): AISummaryOutput {
+    return {
+      summary: {
+        overview: '今日群内互动情况已记录，AI分析暂时不可用。',
+        highlights: ['群内有日常交流活动'],
+        atmosphere: '日常'
+      },
+      hotTopics: [],
+      importantInfo: [],
+      quotes: []
     }
   }
 }
