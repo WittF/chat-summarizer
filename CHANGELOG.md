@@ -1,3 +1,9 @@
+## [1.19.0](https://github.com/WittF/chat-summarizer/compare/v1.18.0...v1.19.0) (2026-01-20)
+
+### ✨ 功能更新
+
+* 新增群组独立配置与卡片渲染功能 ([6035708](https://github.com/WittF/chat-summarizer/commit/6035708b3ac84f2c1ef01e583402821bb55bfe03))
+
 ## [1.18.0](https://github.com/WittF/chat-summarizer/compare/v1.17.0...v1.18.0) (2025-10-08)
 
 ### ✨ 功能更新
