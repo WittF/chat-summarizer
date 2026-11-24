@@ -24,11 +24,14 @@ import {
 import {
   AttemptResult,
   NestedMediaRef,
+  classifyFailure,
   collectForwardMedia,
   collectTopLevelAudio,
+  createLimiter,
   extractReplyId,
   findRefreshedUrl,
   pickRefreshedTopLevelUrl,
+  retryStep,
   runPool,
   uploadWithRetry
 } from './media-extra'
@@ -346,8 +349,11 @@ export function apply(ctx: Context, config: Config) {
 
   // 重试前各等多久：30 秒、2 分钟、10 分钟
   const RETRY_DELAYS_MS = [30_000, 120_000, 600_000]
-  // 一条消息里（主要是大的合并转发）同时转存几个
+  // 转发里的媒体同时转存几个。是全局的闸门：几条大的合并转发同时到，加起来也不超过这个数。
   const MEDIA_CONCURRENCY = 4
+  const forwardLimiter = createLimiter(MEDIA_CONCURRENCY)
+  // 视频整段读进内存再传（单个最大 200MB），同一时刻只放一个
+  const forwardVideoLimiter = createLimiter(1)
   const FORWARD_IMAGE_MAX_BYTES = 50 * 1024 * 1024
   const FORWARD_VIDEO_MAX_BYTES = 200 * 1024 * 1024
   const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -355,6 +361,10 @@ export function apply(ctx: Context, config: Config) {
   // 还没跑完第一轮转存的消息数。每天传 JSONL 之前等它归零（最多等两分钟），
   // 免得传上去的那份里留着腾讯地址而文件其实随后就进了桶。
   let firstPassInflight = 0
+
+  // 插件被卸载或热重载后置位。旧实例里还在等重试的转存看到它就收手：
+  // 写回记录要「整份读出、改、整份写回」，和新实例的写入不在一条队列里，会把新追加的聊天记录覆盖掉。
+  let disposed = false
 
   // 向机器人发一个 OneBot 原始请求；不是 onebot 平台、适配器没这个口子、或请求失败都返回 null
   const rawBotRequest = async (mc: MediaContext, action: string, params: Record<string, any>): Promise<any | null> => {
@@ -371,24 +381,25 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 腾讯的媒体地址带签名、不到一天就失效。重试隔得久了要先让机器人把消息重取一遍拿新地址。
-  // 同一条消息 20 秒内只重取一次，多个失败项共用结果。
+  // 每一轮重试里同一条消息只重取一次，多个失败项共用结果；下一轮开始前 newRound() 清掉，重新取。
   const createRefresher = (mc: MediaContext) => {
-    const FRESH_MS = 20_000
-    let top: { at: number; segments: Promise<any[] | null> } | null = null
-    const forwards = new Map<string, { at: number; refs: Promise<NestedMediaRef[]> }>()
+    let top: Promise<any[] | null> | null = null
+    const forwards = new Map<string, Promise<NestedMediaRef[]>>()
 
     return {
+      newRound: () => {
+        top = null
+        forwards.clear()
+      },
+
       // 顶层的图片 / 视频 / 文件 / 语音：get_msg（消息还在机器人最近消息的缓存里才取得到）
       top: async (rawType: string, index: number, expectedCount: number, originalUrl: string): Promise<string | null> => {
-        if (!top || Date.now() - top.at > FRESH_MS) {
+        if (!top) {
           const id = /^-?\d+$/.test(mc.messageId) ? Number(mc.messageId) : mc.messageId
-          top = {
-            at: Date.now(),
-            segments: rawBotRequest(mc, 'get_msg', { message_id: id })
-              .then(data => (Array.isArray(data?.message) ? data.message : null))
-          }
+          top = rawBotRequest(mc, 'get_msg', { message_id: id })
+            .then(data => (Array.isArray(data?.message) ? data.message : null))
         }
-        const segments = await top.segments
+        const segments = await top
         return segments ? pickRefreshedTopLevelUrl(segments, rawType, index, expectedCount, originalUrl) : null
       },
 
@@ -398,24 +409,21 @@ export function apply(ctx: Context, config: Config) {
           return null
         }
         let entry = forwards.get(ref.forwardId)
-        if (!entry || Date.now() - entry.at > FRESH_MS) {
-          entry = {
-            at: Date.now(),
-            refs: rawBotRequest(mc, 'get_group_msg_history', {
-              group_id: mc.guildId,
-              message_seq: ref.forwardId,
-              count: 1,
-              parse_mult_msg: true
-            }).then(data => {
-              const first = Array.isArray(data?.messages) ? data.messages[0] : null
-              const segments: any[] = Array.isArray(first?.message) ? first.message : []
-              const forward = segments.find(seg => seg?.type === 'forward' && String(seg?.data?.id) === ref.forwardId)
-              return forward ? collectForwardMedia([{ type: 'forward', attrs: forward.data }]) : []
-            })
-          }
+        if (!entry) {
+          entry = rawBotRequest(mc, 'get_group_msg_history', {
+            group_id: mc.guildId,
+            message_seq: ref.forwardId,
+            count: 1,
+            parse_mult_msg: true
+          }).then(data => {
+            const first = Array.isArray(data?.messages) ? data.messages[0] : null
+            const segments: any[] = Array.isArray(first?.message) ? first.message : []
+            const forward = segments.find(seg => seg?.type === 'forward' && String(seg?.data?.id) === ref.forwardId)
+            return forward ? collectForwardMedia([{ type: 'forward', attrs: forward.data }]) : []
+          })
           forwards.set(ref.forwardId, entry)
         }
-        return findRefreshedUrl(await entry.refs, ref)
+        return findRefreshedUrl(await entry, ref)
       }
     }
   }
@@ -434,7 +442,12 @@ export function apply(ctx: Context, config: Config) {
         timestamp: record.timestamp,
         ...entry
       }) + '\n'
-      await fileWriter.safeAppend(filePath, line)
+      if (disposed) {
+        // 旧实例的写入器已经关了；失败清单只追加，直接写不会和新实例打架
+        await fs.appendFile(filePath, line, 'utf8')
+      } else {
+        await fileWriter.safeAppend(filePath, line)
+      }
     } catch (error: any) {
       logger.error('写入媒体转存失败清单时出错', error)
     }
@@ -450,6 +463,8 @@ export function apply(ctx: Context, config: Config) {
     onSuccess: (result: AttemptResult) => void
     attempts: number
     error?: string
+    /** 不用再试了（注定失败，或源头没有了又换不到新地址） */
+    giveUp?: boolean
   }
 
   // 异步处理图片、文件、视频、语音，以及合并转发里的图片和视频
@@ -528,19 +543,28 @@ export function apply(ctx: Context, config: Config) {
 
     for (const ref of nestedRefs) {
       const isVideo = ref.kind === 'video'
+      const maxSize = isVideo ? FORWARD_VIDEO_MAX_BYTES : FORWARD_IMAGE_MAX_BYTES
       jobs.push({
         where: 'forward', kind: ref.kind, url: ref.url,
         describe: { forwardId: ref.forwardId, path: ref.path, file: ref.file }, attempts: 0,
         attempt: async (url) => {
-          const result = await s3Uploader.uploadForwardMediaFromUrl(url, {
-            md5: ref.md5,
-            ext: ref.ext,
-            maxSize: isVideo ? FORWARD_VIDEO_MAX_BYTES : FORWARD_IMAGE_MAX_BYTES,
-            timeout: isVideo ? 300000 : 60000
-          })
-          return result.success && result.key
-            ? { ok: true, key: result.key, size: result.fileSize }
-            : { ok: false, error: result.error || '转发媒体上传失败' }
+          // 片段自报的大小已经超限就不下载了
+          if (ref.size > maxSize) {
+            return { ok: false, error: `文件过大: ${Math.round(ref.size / 1024 / 1024)}MB > ${Math.round(maxSize / 1024 / 1024)}MB` }
+          }
+          const run = async (): Promise<AttemptResult> => {
+            const result = await s3Uploader.uploadForwardMediaFromUrl(url, {
+              md5: ref.md5,
+              ext: ref.ext,
+              maxSize,
+              timeout: isVideo ? 300000 : 60000,   // 下载的总时限；传桶另有 90 秒时限
+              verifyMd5: !isVideo
+            })
+            return result.success && result.key
+              ? { ok: true, key: result.key, size: result.fileSize }
+              : { ok: false, error: result.error || '转发媒体上传失败' }
+          }
+          return isVideo ? forwardVideoLimiter(() => forwardLimiter(run)) : forwardLimiter(run)
         },
         refresh: () => refresher.forward(ref),
         onSuccess: (result) => {
@@ -585,15 +609,15 @@ export function apply(ctx: Context, config: Config) {
         content: updatedContent
       }
 
-      // 列表保持原来的个数和顺序：存下的换成桶地址，没存下的留着原样
+      // 列表保持原来的个数和顺序，一律是地址字符串：存下的换成桶地址，没存下的留着原来的地址
       if (imageUrls.some(url => urlMapping[url])) {
         updateData.imageUrls = safeJsonStringify(imageUrls.map(url => urlMapping[url] || url))
       }
       if (fileUrls.some(info => urlMapping[info.url])) {
-        updateData.fileUrls = safeJsonStringify(fileUrls.map(info => urlMapping[info.url] || info))
+        updateData.fileUrls = safeJsonStringify(fileUrls.map(info => urlMapping[info.url] || info.url))
       }
       if (videoUrls.some(info => urlMapping[info.url])) {
-        updateData.videoUrls = safeJsonStringify(videoUrls.map(info => urlMapping[info.url] || info))
+        updateData.videoUrls = safeJsonStringify(videoUrls.map(info => urlMapping[info.url] || info.url))
       }
       if (elementsTouched) {
         updateData.originalElements = safeJsonStringify(elements)
@@ -622,15 +646,10 @@ export function apply(ctx: Context, config: Config) {
       }
     }
 
-    // 第一轮：每个都试一次。顶层的照旧同时跑，转发里的限并发。
+    // 第一轮：每个都试一次。顶层的照旧同时跑；转发里的由全局闸门限并发。
     firstPassInflight++
     try {
-      const topJobs = jobs.filter(job => job.where !== 'forward')
-      const nestedJobs = jobs.filter(job => job.where === 'forward')
-      await Promise.all([
-        Promise.all(topJobs.map(job => runJob(job, []))),
-        runPool(nestedJobs, MEDIA_CONCURRENCY, job => runJob(job, []))
-      ])
+      await Promise.all(jobs.map(job => runJob(job, [])))
       await writeBack()
     } catch (error: any) {
       logger.error('批量上传文件时发生错误', error)
@@ -638,16 +657,62 @@ export function apply(ctx: Context, config: Config) {
       firstPassInflight--
     }
 
-    // 第二轮：只重试第一轮失败的
+    // 之后只重试第一轮失败的，按轮来：整批等一次 → 还没成的各试一次 → 有成的立刻写回 → 下一轮。
+    // （等待不能放进每个任务里各睡各的：并发有上限，睡眠会排成队，失败的一多就要拖上几个小时。）
     const failedJobs = jobs.filter(job => job.error)
     if (failedJobs.length === 0) {
       return
     }
+    for (const job of failedJobs) {
+      if (classifyFailure(job.error) === 'permanent') {
+        job.giveUp = true
+      }
+    }
 
     try {
-      await runPool(failedJobs, MEDIA_CONCURRENCY, job => runJob(job, RETRY_DELAYS_MS, job.error))
-      if (failedJobs.some(job => !job.error)) {
-        await writeBack()
+      for (let round = 0; round < RETRY_DELAYS_MS.length; round++) {
+        const pending = failedJobs.filter(job => job.error && !job.giveUp)
+        if (pending.length === 0) {
+          break
+        }
+        await sleep(RETRY_DELAYS_MS[round])
+        if (disposed) {
+          break
+        }
+        refresher.newRound()
+        let progressed = false
+        const landed: Array<{ job: MediaJob; stored: string }> = []
+        await runPool(pending, MEDIA_CONCURRENCY, async (job) => {
+          const step = await retryStep(job.url, job.error, round, { attempt: job.attempt, refresh: job.refresh })
+          job.url = step.sourceUrl
+          if (step.attempted) {
+            job.attempts++
+          }
+          if (step.ok) {
+            job.error = undefined
+            job.onSuccess(step)
+            progressed = true
+            landed.push({ job, stored: step.key || step.url || '' })
+          } else {
+            job.error = step.error || job.error
+            job.giveUp = step.giveUp || classifyFailure(job.error) === 'permanent'
+          }
+        })
+        if (progressed && !disposed) {
+          await writeBack()
+        } else if (progressed) {
+          // 这一轮跑到一半插件被重载：文件进了桶但不能再写回记录，记一行免得没人知道
+          for (const item of landed) {
+            await recordMediaFailure(originalRecord, {
+              where: item.job.where,
+              kind: item.job.kind,
+              ...item.job.describe,
+              attempts: item.job.attempts,
+              stored: item.stored,
+              error: '已存进桶，但插件重载，没有写回记录'
+            })
+          }
+        }
       }
     } catch (error: any) {
       logger.error('重试媒体转存时发生错误', error)
@@ -660,14 +725,14 @@ export function apply(ctx: Context, config: Config) {
           kind: job.kind,
           ...job.describe,
           attempts: job.attempts,
-          error: job.error
+          error: disposed ? `${job.error}（插件重载，没有继续重试）` : job.error
         })
       }
     }
   }
 
   // 把最近两天的失败清单传到桶里（failed-media/<日期>/guild_<群>.jsonl）。
-  // 重试最长要十几分钟，前一天的清单过了零点还可能追加，所以每次连前一天的一起重传。
+  // 重试要等十几分钟（三轮：30 秒、2 分钟、10 分钟），前一天的清单过了零点还可能追加，所以每次连前一天的一起重传。
   const uploadFailedMediaLists = async (): Promise<void> => {
     const s3Uploader = s3Service.getUploader()
     if (!s3Uploader) {
@@ -1911,6 +1976,7 @@ export function apply(ctx: Context, config: Config) {
 
   // 插件卸载时清理资源
   ctx.on('dispose', async () => {
+    disposed = true
     if (uploadScheduler) {
       clearTimeout(uploadScheduler)
       uploadScheduler = null

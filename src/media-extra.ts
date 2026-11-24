@@ -155,15 +155,19 @@ export function extractReplyId(rawSegments: unknown): string | undefined {
 }
 
 /**
- * 失败分两类：
- * - gone：源头说没有或地址失效（404、400、403、地址不合法、没有地址）。同一个地址再试没用，除非能换到新地址。
+ * 失败分三类：
+ * - permanent：文件超过大小上限。再试多少次都一样，直接放弃。
+ * - gone：源头说没有或地址失效（404、400、403、410、地址不合法、没有地址）。同一个地址再试没用，除非能换到新地址。
  * - transient：桶报错、超时、网络抖动。隔一会儿再试多半就好。
  */
-export function classifyFailure(message: string | undefined): 'gone' | 'transient' {
+export function classifyFailure(message: string | undefined): 'permanent' | 'gone' | 'transient' {
   const m = (message || '').toLowerCase()
+  if (m.includes('过大') || m.includes('maxcontentlength')) {
+    return 'permanent'
+  }
   if (
-    m.includes('404') || m.includes('资源不存在') || m.includes('invalid url') || m.includes('expired') ||
-    m.includes('没有可下载的地址') || m.includes('http 400') || m.includes('403')
+    /(^|\D)(403|404|410)(\D|$)/.test(m) || m.includes('资源不存在') || m.includes('invalid url') || m.includes('expired') ||
+    m.includes('没有可下载的地址') || m.includes('http 400')
   ) {
     return 'gone'
   }
@@ -196,53 +200,115 @@ export interface RetryOutcome extends AttemptResult {
   finalUrl: string
 }
 
+export interface RetryStepResult extends AttemptResult {
+  /** 这一步之后该用的下载地址（换到了新地址就是新的）。注意不是 AttemptResult.url（那是存进桶后的地址） */
+  sourceUrl: string
+  /** 这一步有没有真的去试（放弃时没有） */
+  attempted: boolean
+  /** 不用再试了：注定失败，或者源头没有了又换不到新地址 */
+  giveUp: boolean
+}
+
 /**
- * 先试一次；失败按 delays 重试。
+ * 做一次重试，不含等待。round 是第几次重试（从 0 起）。
+ * - permanent：不试，直接放弃。
  * - transient：第 1 次重试用原地址，从第 2 次重试起先尝试换新地址（腾讯的地址寿命不到一天，隔久了会失效）。
- * - gone：每次重试前都先尝试换新地址；换不到（或没给 refresh）就不再试，同一个地址再试没用。
+ * - gone：先尝试换新地址；换不到（或没给 refresh）就放弃，同一个地址再试没用。
+ */
+export async function retryStep(
+  url: string,
+  lastError: string | undefined,
+  round: number,
+  opts: Pick<RetryOptions, 'attempt' | 'refresh'>
+): Promise<RetryStepResult> {
+  const kind = classifyFailure(lastError)
+  if (kind === 'permanent') {
+    return { ok: false, error: lastError, sourceUrl: url, attempted: false, giveUp: true }
+  }
+  let refreshed = false
+  if ((kind === 'gone' || round >= 1) && opts.refresh) {
+    try {
+      const fresh = await opts.refresh()
+      if (isHttpUrl(fresh) && fresh !== url) {
+        url = fresh
+        refreshed = true
+      }
+    } catch {
+      // 换不到新地址不算错，继续用旧的
+    }
+  }
+  if (kind === 'gone' && !refreshed) {
+    return { ok: false, error: lastError, sourceUrl: url, attempted: false, giveUp: true }
+  }
+  let result: AttemptResult
+  try {
+    result = isHttpUrl(url) ? await opts.attempt(url) : { ok: false, error: '没有可下载的地址' }
+  } catch (error: any) {
+    result = { ok: false, error: error?.message || String(error) }
+  }
+  return { ...result, sourceUrl: url, attempted: true, giveUp: false }
+}
+
+/**
+ * 先试一次；失败按 delays 逐次等待再重试（每次重试的规则见 retryStep）。
+ * 等待是每个任务自己睡，只适合单个任务；一批任务要重试时应当「整批睡一次、再各试一次」，见调用方。
  */
 export async function uploadWithRetry(initialUrl: string, opts: RetryOptions): Promise<RetryOutcome> {
   let url = initialUrl
   let attempts = 0
   let last: AttemptResult = { ok: false, error: '没有可下载的地址' }
 
-  const tryOnce = async (): Promise<boolean> => {
+  if (opts.previousError !== undefined) {
+    last = { ok: false, error: opts.previousError }
+  } else {
     attempts++
     try {
       last = isHttpUrl(url) ? await opts.attempt(url) : { ok: false, error: '没有可下载的地址' }
     } catch (error: any) {
       last = { ok: false, error: error?.message || String(error) }
     }
-    return last.ok
-  }
-
-  if (opts.previousError !== undefined) {
-    last = { ok: false, error: opts.previousError }
-  } else if (await tryOnce()) {
-    return { ...last, attempts, finalUrl: url }
+    if (last.ok) {
+      return { ...last, attempts, finalUrl: url }
+    }
   }
 
   for (let i = 0; i < opts.delays.length; i++) {
-    const kind = classifyFailure(last.error)
-    const wantRefresh = kind === 'gone' || i >= 1
+    if (classifyFailure(last.error) === 'permanent') break
     await opts.sleep(opts.delays[i])
-    let refreshed = false
-    if (wantRefresh && opts.refresh) {
-      try {
-        const fresh = await opts.refresh()
-        if (isHttpUrl(fresh) && fresh !== url) {
-          url = fresh
-          refreshed = true
-        }
-      } catch {
-        // 换不到新地址不算错，继续用旧的
-      }
+    const step = await retryStep(url, last.error, i, opts)
+    url = step.sourceUrl
+    if (step.attempted) {
+      attempts++
+      last = { ok: step.ok, key: step.key, url: step.url, size: step.size, error: step.error }
     }
-    if (kind === 'gone' && !refreshed) break
-    if (await tryOnce()) break
+    if (step.ok || step.giveUp) break
   }
 
   return { ...last, attempts, finalUrl: url }
+}
+
+/**
+ * 全局并发闸门：同一时刻最多放 limit 个任务进去，其余排队。
+ * 和 runPool 的区别：runPool 管「这一批」，这个管「所有批加起来」。
+ */
+export function createLimiter(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let active = 0
+  const queue: Array<() => void> = []
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (active >= limit) {
+      // 排队；被叫到时名额是前一个任务直接让出来的，不用再加
+      await new Promise<void>(resolve => queue.push(resolve))
+    } else {
+      active++
+    }
+    try {
+      return await task()
+    } finally {
+      const next = queue.shift()
+      if (next) next()
+      else active--
+    }
+  }
 }
 
 /** 限并发地跑一批任务；单个任务抛错不影响其它 */
@@ -263,12 +329,13 @@ export async function runPool<T>(items: T[], limit: number, worker: (item: T) =>
 
 /**
  * 在重取回来的转发内容里，按「位置 + 文件名」找同一个片段的新地址。
- * 位置对不上（比如机器人返回的节点数变了）时退一步按文件名找。
+ * 位置对不上（比如机器人返回的节点数变了）时退一步按文件名找（仅限文件名是 md5 的）。
  */
 export function findRefreshedUrl(fresh: NestedMediaRef[], target: Pick<NestedMediaRef, 'kind' | 'path' | 'file'>): string | null {
   const exact = fresh.find(r => r.kind === target.kind && r.path === target.path && (!target.file || r.file === target.file))
   if (exact && isHttpUrl(exact.url)) return exact.url
-  if (target.file) {
+  // 只有文件名是 md5（内容相同名字才相同）时才敢按名字找；video.mp4 这种重名的可能是别的文件
+  if (target.file && parseMediaName(target.file).md5) {
     const byName = fresh.find(r => r.kind === target.kind && r.file === target.file)
     if (byName && isHttpUrl(byName.url)) return byName.url
   }

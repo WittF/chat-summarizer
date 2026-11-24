@@ -338,68 +338,100 @@ export class S3Uploader {
    * 加上 pathPrefix 之后的完整键名（和 uploadBuffer 里的拼法一致）
    */
   private withPrefix(key: string): string {
-    const cleanPrefix = (this.config.pathPrefix || '').replace(/^\/+|\/+$/g, '')
+    if (!this.config.pathPrefix || this.config.pathPrefix.trim() === '') {
+      return key
+    }
+    const cleanPrefix = this.config.pathPrefix.replace(/^\/+|\/+$/g, '')
     return cleanPrefix ? `${cleanPrefix}/${key}` : key
   }
 
   /**
-   * 桶里有没有这个对象。有返回大小，没有返回 -1；查不了（网络、权限）抛错。
+   * 桶里有没有这个对象。有返回大小；没有、或者查不了（网络、权限、有的桶对不存在的对象回 403）都返回 -1。
+   * 只用来决定「要不要省掉一次下载」，查不了就当没有、照常下载上传，同样内容再传一遍没有害处。
    */
   public async objectSize(key: string): Promise<number> {
     try {
       const head = await this.client.send(new HeadObjectCommand({ Bucket: this.config.bucket, Key: this.withPrefix(key) }))
       return head.ContentLength ?? 0
+    } catch {
+      return -1
+    }
+  }
+
+  /**
+   * 下载到内存，带总时限（axios 自带的 timeout 只管「多久没动静」，慢速滴流会一直拖着）。
+   * 空内容算失败：存一个 0 字节的对象进去，以后「已存在就跳过」会一直拿它当真。
+   */
+  private async downloadToBuffer(url: string, maxSize: number, timeout: number): Promise<Buffer> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+    try {
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer' as const,
+        timeout,
+        maxContentLength: maxSize,
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      })
+      const buffer: Buffer = Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data || [])
+      if (buffer.length === 0) {
+        throw new Error('下载失败：内容为空')
+      }
+      if (buffer.length > maxSize) {
+        throw new Error(`文件过大: ${Math.round(buffer.length / 1024 / 1024)}MB > ${Math.round(maxSize / 1024 / 1024)}MB`)
+      }
+      return buffer
     } catch (error: any) {
-      const status = error?.$metadata?.httpStatusCode
-      if (status === 404 || error?.name === 'NotFound' || error?.name === 'NoSuchKey') {
-        return -1
+      if (controller.signal.aborted) {
+        throw new Error(`下载超时（${Math.round(timeout / 1000)}秒）`)
       }
       throw error
+    } finally {
+      clearTimeout(timer)
     }
   }
 
   /**
    * 合并转发里的图片 / 视频：按内容寻址存放（forward-media/<md5 前两位>/<md5>.<扩展名>）。
-   * 桶里已经有同一个文件就不再下载、不覆盖，直接返回它的键名。
+   * 桶里已经有同一个文件（且不是空的）就不再下载、不覆盖，直接返回它的键名。
    * md5 取自片段的文件名；文件名不是 md5 形状时用下载内容现算。
+   * verifyMd5：下载后核对内容的 md5 和文件名里的是否一致，不一致就按实际内容的 md5 存，
+   * 免得源头回了别的东西却占住原图的键名。图片开，视频不开（大文件现算会卡住进程）。
    */
   public async uploadForwardMediaFromUrl(
     url: string,
-    opts: { md5?: string | null; ext?: string | null; maxSize: number; timeout: number }
+    opts: { md5?: string | null; ext?: string | null; maxSize: number; timeout: number; verifyMd5?: boolean }
   ): Promise<UploadResult> {
     try {
-      if (opts.md5 && opts.ext) {
-        const key = forwardMediaKey(opts.md5, opts.ext)
+      const existing = async (key: string): Promise<UploadResult | null> => {
         const size = await this.objectSize(key)
-        if (size >= 0) {
-          return { success: true, key: this.withPrefix(key), url: this.generatePublicUrl(this.withPrefix(key)), fileSize: size }
-        }
+        return size > 0
+          ? { success: true, key: this.withPrefix(key), url: this.generatePublicUrl(this.withPrefix(key)), fileSize: size }
+          : null
       }
 
-      const response = await axios.get(url, {
-        responseType: 'arraybuffer' as const,
-        timeout: opts.timeout,
-        maxContentLength: opts.maxSize,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-      })
-      if (!response.data) {
-        return { success: false, error: '下载失败：响应数据为空' }
-      }
-      const buffer = Buffer.from(response.data)
-      if (buffer.length > opts.maxSize) {
-        return { success: false, error: `文件过大: ${Math.round(buffer.length / 1024 / 1024)}MB > ${Math.round(opts.maxSize / 1024 / 1024)}MB` }
+      if (opts.md5 && opts.ext) {
+        const hit = await existing(forwardMediaKey(opts.md5, opts.ext))
+        if (hit) return hit
       }
 
-      const md5 = opts.md5 || crypto.createHash('md5').update(buffer).digest('hex')
+      const buffer = await this.downloadToBuffer(url, opts.maxSize, opts.timeout)
+
+      let md5 = opts.md5 || ''
+      let computed = false
+      if (!md5 || opts.verifyMd5) {
+        const actual = crypto.createHash('md5').update(buffer).digest('hex')
+        computed = actual !== md5.toLowerCase()
+        md5 = actual
+      }
       const ext = opts.ext || sniffExt(buffer)
       const key = forwardMediaKey(md5, ext)
-      if (!(opts.md5 && opts.ext)) {
-        const size = await this.objectSize(key)
-        if (size >= 0) {
-          return { success: true, key: this.withPrefix(key), url: this.generatePublicUrl(this.withPrefix(key)), fileSize: size }
-        }
+      // 键名和开头查过的那个不一样（现算的 md5，或扩展名是现猜的）才需要再查一次
+      if (computed || !opts.ext) {
+        const hit = await existing(key)
+        if (hit) return hit
       }
       return await this.uploadBuffer(buffer, key, contentTypeForExt(ext))
     } catch (error: any) {
@@ -413,18 +445,7 @@ export class S3Uploader {
    */
   public async uploadAudioFromUrl(url: string, keyBase: string, fallbackExt: string = 'amr'): Promise<UploadResult> {
     try {
-      const response = await axios.get(url, {
-        responseType: 'arraybuffer' as const,
-        timeout: 60000,
-        maxContentLength: 50 * 1024 * 1024,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-      })
-      if (!response.data) {
-        return { success: false, error: '下载语音失败：响应数据为空' }
-      }
-      const buffer = Buffer.from(response.data)
+      const buffer = await this.downloadToBuffer(url, 50 * 1024 * 1024, 60000)
       const ext = sniffAudioExt(buffer) || fallbackExt
       return await this.uploadBuffer(buffer, `${keyBase}.${ext}`, contentTypeForExt(ext))
     } catch (error: any) {

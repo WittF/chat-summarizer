@@ -4,11 +4,13 @@ import {
   classifyFailure,
   collectForwardMedia,
   collectTopLevelAudio,
+  createLimiter,
   extractReplyId,
   findRefreshedUrl,
   forwardMediaKey,
   parseMediaName,
   pickRefreshedTopLevelUrl,
+  retryStep,
   runPool,
   sniffAudioExt,
   sniffExt,
@@ -284,4 +286,98 @@ test('pickRefreshedTopLevelUrl：不带 fileid 的（视频）只有个数对得
   assert.equal(pickRefreshedTopLevelUrl(segs, 'video', 1, 2, old), null) // 本机路径不算地址
   assert.equal(pickRefreshedTopLevelUrl(segs, 'video', 0, 1, old), null) // 个数变了，不配
   assert.equal(pickRefreshedTopLevelUrl(segs, 'record', 0, 1, old), null)
+})
+
+test('classifyFailure：超过大小上限算 permanent；数字要单独出现才算状态码', () => {
+  assert.equal(classifyFailure('文件过大: 300MB > 200MB'), 'permanent')
+  assert.equal(classifyFailure('maxContentLength size of 209715200 exceeded'), 'permanent')
+  assert.equal(classifyFailure('connect ECONNREFUSED 10.0.0.1:44030'), 'transient')
+  assert.equal(classifyFailure('请求失败（HTTP 410）'), 'gone')
+  assert.equal(classifyFailure('下载超时（300秒）'), 'transient')
+})
+
+test('uploadWithRetry：超过大小上限不重试、不等待', async () => {
+  let n = 0
+  let slept = 0
+  const r = await uploadWithRetry(T, {
+    attempt: async () => { n++; return { ok: false, error: '文件过大: 300MB > 200MB' } },
+    delays: [1, 1, 1],
+    sleep: async () => { slept++ },
+  })
+  assert.equal(n, 1)
+  assert.equal(slept, 0)
+  assert.equal(r.attempts, 1)
+})
+
+test('retryStep：permanent 和换不到地址的 gone 都放弃且不调用 attempt', async () => {
+  let n = 0
+  const attempt = async () => { n++; return { ok: true, key: 'k' } }
+  const p = await retryStep(T, '文件过大: 300MB > 200MB', 0, { attempt })
+  assert.deepEqual([p.ok, p.attempted, p.giveUp, p.sourceUrl], [false, false, true, T])
+  const g = await retryStep(T, '资源不存在（404）', 0, { attempt, refresh: async () => null })
+  assert.deepEqual([g.ok, g.attempted, g.giveUp], [false, false, true])
+  assert.equal(g.error, '资源不存在（404）')
+  assert.equal(n, 0)
+})
+
+test('retryStep：偶发错误第 0 轮不换地址，第 1 轮起换；成功时带回存好的键名和地址，sourceUrl 是下载地址', async () => {
+  const seen: string[] = []
+  let refreshes = 0
+  const opts = {
+    attempt: async (url: string) => { seen.push(url); return { ok: true, key: 'k', url: 'https://bucket/k' } },
+    refresh: async () => { refreshes++; return 'https://multimedia.nt.qq.com.cn/fresh' },
+  }
+  const a = await retryStep(T, '网络连接中断', 0, opts)
+  assert.equal(refreshes, 0)
+  assert.deepEqual([a.ok, a.attempted, a.giveUp, a.sourceUrl, a.url, a.key], [true, true, false, T, 'https://bucket/k', 'k'])
+  const b = await retryStep(T, '网络连接中断', 1, opts)
+  assert.equal(refreshes, 1)
+  assert.equal(b.sourceUrl, 'https://multimedia.nt.qq.com.cn/fresh')
+  assert.deepEqual(seen, [T, 'https://multimedia.nt.qq.com.cn/fresh'])
+})
+
+test('retryStep：gone 换到新地址就用新地址试；attempt 抛错当失败、不放弃', async () => {
+  const r = await retryStep(T, 'download url has expired', 0, {
+    attempt: async () => { throw new Error('boom') },
+    refresh: async () => 'https://multimedia.nt.qq.com.cn/fresh',
+  })
+  assert.deepEqual([r.ok, r.attempted, r.giveUp, r.error, r.sourceUrl], [false, true, false, 'boom', 'https://multimedia.nt.qq.com.cn/fresh'])
+})
+
+test('createLimiter：几批任务加起来也不超过上限，全部跑完，抛错不占名额', async () => {
+  const limit = createLimiter(2)
+  let active = 0
+  let peak = 0
+  let done = 0
+  const task = (fail: boolean) => async () => {
+    active++
+    peak = Math.max(peak, active)
+    await new Promise(resolve => setTimeout(resolve, 2))
+    active--
+    if (fail) throw new Error('x')
+    done++
+  }
+  const batch = (n: number) => Promise.all(Array.from({ length: n }, (_, i) => limit(task(i % 3 === 0)).catch(() => {})))
+  await Promise.all([batch(7), batch(5), batch(1)])
+  assert.equal(peak, 2)
+  assert.equal(done, 13 - 3 - 2 - 1)
+  // 都跑完后名额要还清：再来 2 个应当能同时跑
+  peak = 0
+  await Promise.all([limit(task(false)), limit(task(false))])
+  assert.equal(peak, 2)
+})
+
+test('findRefreshedUrl：文件名不是 md5 的（可能重名）位置对不上就不按名字找', () => {
+  const fresh = collectForwardMedia([{
+    type: 'forward',
+    attrs: {
+      id: '7000000000000000009',
+      content: [
+        { message: [{ type: 'video', data: { file: 'video.mp4', url: 'https://multimedia.nt.qq.com.cn/v1' } }] },
+        { message: [{ type: 'video', data: { file: 'video.mp4', url: 'https://multimedia.nt.qq.com.cn/v2' } }] },
+      ],
+    },
+  }])
+  assert.equal(findRefreshedUrl(fresh, { kind: 'video', path: '1.0', file: 'video.mp4' }), 'https://multimedia.nt.qq.com.cn/v2')
+  assert.equal(findRefreshedUrl(fresh, { kind: 'video', path: '5.0', file: 'video.mp4' }), null)
 })
