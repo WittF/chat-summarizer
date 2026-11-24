@@ -1,3 +1,15 @@
+## [1.21.0](https://github.com/WittF/chat-summarizer/compare/v1.20.0...v1.21.0) (2026-11-24)
+
+### ✨ 功能更新
+
+* 合并转发里的图片、视频和语音当场转存；转存失败按轮重试三次，最后还不行的记进失败清单；多记回复目标等字段 ([1823b31](https://github.com/WittF/chat-summarizer/commit/1823b31d938eae06547f0a6bb83ece7cf4019d47))
+
+## [1.20.0](https://github.com/WittF/chat-summarizer/compare/v1.19.0...v1.20.0) (2026-11-24)
+
+### ✨ 功能更新
+
+* 存储桶不再需要公开读 ([a798fa9](https://github.com/WittF/chat-summarizer/commit/a798fa9588b2aeae7c77dfa8156e85ab804c037c))
+
 ## [1.19.0](https://github.com/WittF/chat-summarizer/compare/v1.18.0...v1.19.0) (2026-01-20)
 
 ### ✨ 功能更新
