@@ -11,6 +11,7 @@ import { SafeFileWriter } from './file-writer'
 import { AIService } from './ai-service'
 import { MarkdownToImageService } from './md-to-image'
 import { StatisticsService } from './statistics'
+import { buildPokeEntry, createNameCache, readPoke } from './poke'
 import { CardRenderer } from './card-renderer'
 import {
   formatDateInUTC8,
@@ -1968,6 +1969,41 @@ export function apply(ctx: Context, config: Config) {
 
     } catch (error: any) {
       logger.error('处理消息时发生错误', error)
+    }
+  })
+
+  // 群里的「戳一戳」：它是通知不是消息，上面那个监听收不到。记成聊天记录文件里的一行（带 notice: 'poke'），
+  // 只写文件、不进数据库（数据库那份是给消息的媒体转存用的）。
+  const pokeNames = createNameCache()
+  ctx.on('notice' as any, async (session: Session) => {
+    if (session.subtype !== 'poke' || config.chatLog.recordPoke === false) {
+      return
+    }
+    // 和消息用同一套「这个群记不记、这个人记不记」
+    if (!shouldMonitorMessage(session)) {
+      return
+    }
+
+    try {
+      const poke = readPoke(session as any, (session.event as any)?._data)
+      if (!poke) {
+        return
+      }
+      const nameOf = (userId: string) => pokeNames(`${poke.guildId}:${userId}`, async () => {
+        const member: any = await session.bot.getGuildMember(poke.guildId, userId)
+        return member?.nick || member?.name || member?.user?.nick || member?.user?.name
+      })
+      const [user, target] = await Promise.all([nameOf(poke.userId), nameOf(poke.targetId)])
+      const entry = buildPokeEntry(poke, { user, target }, formatDateInUTC8(poke.timestamp))
+
+      const filePath = path.join(getStorageDir('data'), `${poke.guildId}_${getDateStringInUTC8(poke.timestamp)}.jsonl`)
+      await fileWriter.safeAppend(filePath, safeJsonStringify(entry) + '\n')
+
+      if (config.debug) {
+        logger.info(`记下一次戳一戳: ${entry.content}`)
+      }
+    } catch (error: any) {
+      logger.error('记录戳一戳时发生错误', error)
     }
   })
 
