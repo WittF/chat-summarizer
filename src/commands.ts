@@ -2,7 +2,7 @@ import { Context, Session, h } from 'koishi'
 import { Config, PluginStats } from './types'
 import { DatabaseOperations } from './database'
 import { S3Uploader } from './s3-uploader'
-import { safeJsonParse } from './utils'
+import { safeJsonParse, buildStoredImageElement, toTimedUrl } from './utils'
 import { ExportManager, ExportRequest } from './export'
 import { AIService } from './ai-service'
 import { MarkdownToImageService } from './md-to-image'
@@ -197,9 +197,9 @@ export class CommandHandler {
 
       // 处理图片链接
       if (imageRecords.length > 0) {
-        responseContent += '🖼️ 图片链接:\n'
+        responseContent += '🖼️ 图片链接（24小时内有效）:\n'
         imageRecords.forEach((img, index) => {
-          responseContent += `${index + 1}. ${img.s3Url}\n`
+          responseContent += `${index + 1}. ${toTimedUrl(this.s3Uploader, img.s3Url, img.s3Key)}\n`
         })
         hasContent = true
       }
@@ -209,9 +209,9 @@ export class CommandHandler {
         if (hasContent) {
           responseContent += '\n'
         }
-        responseContent += '📁 文件链接:\n'
+        responseContent += '📁 文件链接（24小时内有效）:\n'
         fileRecords.forEach((file, index) => {
-          responseContent += `${index + 1}. ${file.fileName}\n${file.s3Url}\n`
+          responseContent += `${index + 1}. ${file.fileName}\n${toTimedUrl(this.s3Uploader, file.s3Url, file.s3Key)}\n`
           if (index < fileRecords.length - 1) {
             responseContent += '\n'
           }
@@ -411,7 +411,7 @@ export class CommandHandler {
 
       // 基础导出成功消息
       let responseMessage = result.message || '导出成功！'
-      responseMessage += `\n\n📥 下载链接: ${result.s3Url}`
+      responseMessage += `\n\n📥 下载链接（24小时内有效）: ${result.s3Url}`
 
       // 如果启用AI总结，生成总结
       if (enableSummarize) {
@@ -419,8 +419,8 @@ export class CommandHandler {
         try {
           aiTempMessage = await this.sendMessage(session, [h.text('📝 正在生成AI总结...')])
           
-          // 下载导出的文件内容
-          const fileContent = await this.downloadExportContent(result.s3Url)
+          // 直接使用刚导出的内容；拿不到时再按下载链接取
+          const fileContent = result.content || await this.downloadExportContent(result.s3Url)
           
           if (!fileContent) {
             responseMessage += '\n\n⚠️ 无法下载导出文件进行AI总结'
@@ -498,6 +498,11 @@ export class CommandHandler {
       console.error('处理导出命令失败:', error)
       await this.sendMessage(session, [h.text(`❌ 导出过程中发生错误: ${error?.message || '未知错误'}`)])
     }
+  }
+
+  // 带凭据取图失败、退回按地址发送时留一条日志
+  private warnImageFallback = (error: any) => {
+    this.ctx.logger('chat-summarizer').warn(`读取总结图片失败，改为按地址发送: ${error?.message || error}`)
   }
 
   // 下载导出文件内容
@@ -681,7 +686,7 @@ export class CommandHandler {
         if (imageUrl) {
           await this.sendMessage(session, [
             h.text(`✅ ${groupInfo} 在 ${date} 的AI总结重新生成完成\n\n`),
-            h.image(imageUrl)
+            await buildStoredImageElement(this.s3Uploader, imageUrl, this.warnImageFallback)
           ])
         } else {
           await this.sendMessage(session, [h.text(`✅ ${groupInfo} 在 ${date} 的AI总结重新生成完成`)])
@@ -730,7 +735,7 @@ export class CommandHandler {
         for (const item of generatedUrls) {
           const groupInfo = item.guildId ? `群组 ${item.guildId}` : '私聊'
           messageElements.push(h.text(`📸 ${groupInfo}:\n`))
-          messageElements.push(h.image(item.url))
+          messageElements.push(await buildStoredImageElement(this.s3Uploader, item.url, this.warnImageFallback))
           messageElements.push(h.text('\n'))
         }
 
@@ -812,11 +817,11 @@ export class CommandHandler {
         const groupInfo = targetGuildId ? `群组 ${targetGuildId}` : '私聊'
         await this.sendMessage(session, [
           h.text(`📊 ${groupInfo} - ${parsedDate} AI总结：`),
-          h.image(summaryImageUrl)
+          await buildStoredImageElement(this.s3Uploader, summaryImageUrl, this.warnImageFallback)
         ])
       } catch (error: any) {
         console.error('发送总结图片失败:', error)
-        await this.sendMessage(session, [h.text(`❌ 发送图片失败: ${error?.message || '未知错误'}\n\n🔗 图片链接: ${summaryImageUrl}`)])
+        await this.sendMessage(session, [h.text(`❌ 发送图片失败: ${error?.message || '未知错误'}\n\n🔗 图片链接（24小时内有效）: ${toTimedUrl(this.s3Uploader, summaryImageUrl)}`)])
       }
 
     } catch (error: any) {

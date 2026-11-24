@@ -2,7 +2,9 @@
  * 公共工具函数模块
  */
 
+import { h } from 'koishi'
 import { CONSTANTS } from './config'
+import type { S3Uploader } from './s3-uploader'
 
 /**
  * 将时间戳格式化为 UTC+8 可读时间
@@ -169,3 +171,55 @@ export const replaceImageUrl = (originalUrl: string): string => {
   }
   return originalUrl
 } 
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp'
+}
+
+/**
+ * 把存储桶里的图片做成消息元素：带凭据取回图片内容后直接发送，
+ * 不把对象地址交给聊天平台去下载，所以存储桶不需要公开读。
+ * 不是本存储桶的地址、或取回失败时，退回原来的做法（直接发地址）。
+ */
+export const buildStoredImageElement = async (
+  uploader: S3Uploader | null | undefined,
+  imageUrl: string,
+  onError?: (error: any) => void
+) => {
+  const key = uploader?.keyFromUrl(imageUrl)
+  if (uploader && key) {
+    try {
+      const buffer = await uploader.getObjectBuffer(key)
+      const ext = (key.split('.').pop() || '').toLowerCase()
+      return h.image(buffer, IMAGE_MIME_BY_EXT[ext] || 'image/png')
+    } catch (error: any) {
+      onError?.(error)
+    }
+  }
+  return h.image(imageUrl)
+}
+
+/**
+ * 把存储桶对象换成带时效的下载地址（默认 24 小时）。
+ * 优先从地址里取对象键（地址是上传成功时写下的）；取不到再用记录里的键；都没有就原样返回。
+ */
+export const toTimedUrl = (
+  uploader: S3Uploader | null | undefined,
+  url: string,
+  key?: string | null,
+  expiresIn: number = 86400
+): string => {
+  if (!uploader) return url
+  const objectKey = uploader.keyFromUrl(url) || key
+  if (!objectKey) return url
+  try {
+    return uploader.getPresignedUrl(objectKey, expiresIn)
+  } catch {
+    return url
+  }
+}

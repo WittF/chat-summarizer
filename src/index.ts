@@ -18,7 +18,8 @@ import {
   getCurrentTimeInUTC8,
   safeJsonParse,
   safeJsonStringify,
-  replaceImageUrl
+  replaceImageUrl,
+  buildStoredImageElement
 } from './utils'
 
 export { name, inject }
@@ -1174,7 +1175,10 @@ export function apply(ctx: Context, config: Config) {
     channelId?: string,
     platform?: string
   ): Promise<boolean> => {
-    const messageElements = [h.image(imageUrl)]
+    // 带凭据取回图片内容再发送，不把存储桶地址交给聊天平台去下载
+    const messageElements = [await buildStoredImageElement(s3Service.getUploader(), imageUrl, (error) => {
+      logger.warn(`读取总结图片失败，改为按地址发送: ${error?.message || error}`)
+    })]
 
     for (const bot of ctx.bots) {
       try {
@@ -1279,11 +1283,13 @@ export function apply(ctx: Context, config: Config) {
       const groupInfo = record.guildId ? `群组 ${record.guildId}` : '私聊'
       logger.info(`正在为 ${groupInfo} 生成增强版AI总结 (${record.date})`)
 
-      // 1. 下载聊天记录内容
-      const response = await ctx.http.get(record.s3Url, {
-        timeout: 30000,
-        responseType: 'text'
-      })
+      // 1. 下载聊天记录内容（带凭据从存储桶读取，不依赖公开地址）
+      // 以上传成功时写下的地址为准：重传后 s3Url 会更新，s3Key 不会
+      const logKey = s3Uploader.keyFromUrl(record.s3Url) || record.s3Key
+      if (!logKey) {
+        throw new Error('无法确定聊天记录文件在存储桶中的位置')
+      }
+      const response = (await s3Uploader.getObjectBuffer(logKey)).toString('utf-8')
 
       if (!response) {
         throw new Error('无法下载聊天记录文件')

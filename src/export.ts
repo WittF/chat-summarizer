@@ -13,7 +13,8 @@ export interface ExportRequest {
 
 export interface ExportResult {
   success: boolean
-  s3Url?: string
+  s3Url?: string          // 带时效的下载地址
+  content?: string        // 导出的文本内容
   error?: string
   message?: string
 }
@@ -447,8 +448,10 @@ export class ExportManager {
         await this.cleanupTempFiles(downloadedFiles)
         
         if (result.success) {
-          // 应用URL替换
-          const finalUrl = replaceImageUrl(result.url)
+          // 生成带时效的下载地址（24 小时），存储桶不需要公开读
+          const finalUrl = result.key
+            ? this.s3Uploader.getPresignedUrl(result.key, 86400)
+            : replaceImageUrl(result.url)
           
           const typeInfo = request.messageTypes && request.messageTypes.length > 0 
             ? `📋 消息类型: ${request.messageTypes.join(', ')}\n` 
@@ -457,6 +460,7 @@ export class ExportManager {
           return {
             success: true,
             s3Url: finalUrl,
+            content: exportContent,
             message: `✅ 导出成功！\n\n` +
                      `📊 消息数量: ${messages.length} 条\n` +
                      `📅 时间范围: ${timeRange.dateStrings.join(', ')}\n` +

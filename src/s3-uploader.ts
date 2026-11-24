@@ -1,3 +1,4 @@
+import * as crypto from 'crypto'
 import { S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import * as fs from 'fs/promises'
@@ -728,6 +729,120 @@ export class S3Uploader {
     } catch (error: any) {
       return { success: false, error: handleError(error, '获取文件列表失败') }
     }
+  }
+
+  /**
+   * 给键名补上配置的路径前缀（已带前缀的不重复加）
+   */
+  private resolveFullKey(key: string): string {
+    const cleanKey = key.replace(/^\/+/, '')
+    if (this.config.pathPrefix && this.config.pathPrefix.trim() !== '') {
+      const cleanPrefix = this.config.pathPrefix.replace(/^\/+|\/+$/g, '')
+      if (cleanPrefix && !cleanKey.startsWith(cleanPrefix + '/')) {
+        return `${cleanPrefix}/${cleanKey}`
+      }
+    }
+    return cleanKey
+  }
+
+  /**
+   * 从本插件生成的对象地址里取出对象键。
+   * 不是本存储桶的地址（比如腾讯的原始地址）返回 null。
+   */
+  public keyFromUrl(url?: string | null): string | null {
+    if (!url) return null
+    const prefixes: string[] = []
+    if (this.config.endpoint) {
+      prefixes.push(`${this.config.endpoint.replace(/\/$/, '')}/${this.config.bucket}/`)
+    } else {
+      prefixes.push(`https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com/`)
+    }
+    for (const prefix of prefixes) {
+      if (url.startsWith(prefix)) {
+        return url.substring(prefix.length) || null
+      }
+    }
+    return null
+  }
+
+  /**
+   * 带凭据读取对象内容（存储桶不需要公开读）
+   */
+  public async getObjectBuffer(key: string): Promise<Buffer> {
+    const { GetObjectCommand } = await import('@aws-sdk/client-s3')
+    const response = await this.client.send(new GetObjectCommand({
+      Bucket: this.config.bucket,
+      Key: this.resolveFullKey(key)
+    }))
+    const body = response.Body as any
+    if (!body) {
+      throw new Error('对象内容为空')
+    }
+    if (typeof body.transformToByteArray === 'function') {
+      return Buffer.from(await body.transformToByteArray())
+    }
+    const chunks: Buffer[] = []
+    for await (const chunk of body) {
+      chunks.push(Buffer.from(chunk))
+    }
+    return Buffer.concat(chunks)
+  }
+
+  /**
+   * 生成带时效的下载地址（SigV4 预签名 GET），存储桶不需要公开读。
+   * @param key 对象键
+   * @param expiresIn 有效期（秒），默认 24 小时，最长 7 天
+   */
+  public getPresignedUrl(key: string, expiresIn: number = 86400, now: Date = new Date()): string {
+    const fullKey = this.resolveFullKey(key)
+    const encodeRfc3986 = (value: string) =>
+      encodeURIComponent(value).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+    const encodedKey = fullKey.split('/').map(encodeRfc3986).join('/')
+
+    let origin: string
+    let host: string
+    let canonicalPath: string
+    if (this.config.endpoint) {
+      const endpointUrl = new URL(this.config.endpoint)
+      origin = endpointUrl.origin
+      host = endpointUrl.host
+      const basePath = endpointUrl.pathname.replace(/\/+$/, '')
+      canonicalPath = `${basePath}/${encodeRfc3986(this.config.bucket)}/${encodedKey}`
+    } else {
+      host = `${this.config.bucket}.s3.${this.config.region}.amazonaws.com`
+      origin = `https://${host}`
+      canonicalPath = `/${encodedKey}`
+    }
+
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '')
+    const dateStamp = amzDate.substring(0, 8)
+    const scope = `${dateStamp}/${this.config.region}/s3/aws4_request`
+    const query: Record<string, string> = {
+      'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+      'X-Amz-Credential': `${this.config.accessKeyId}/${scope}`,
+      'X-Amz-Date': amzDate,
+      'X-Amz-Expires': String(Math.min(Math.max(Math.floor(expiresIn), 1), 604800)),
+      'X-Amz-SignedHeaders': 'host'
+    }
+    const canonicalQuery = Object.keys(query).sort()
+      .map(name => `${encodeRfc3986(name)}=${encodeRfc3986(query[name])}`)
+      .join('&')
+    const canonicalRequest = ['GET', canonicalPath, canonicalQuery, `host:${host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join('\n')
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      scope,
+      crypto.createHash('sha256').update(canonicalRequest).digest('hex')
+    ].join('\n')
+
+    const hmac = (key: crypto.BinaryLike, data: string) => crypto.createHmac('sha256', key).update(data).digest()
+    let signingKey: Buffer = hmac(`AWS4${this.config.secretAccessKey}`, dateStamp)
+    for (const part of [this.config.region, 's3', 'aws4_request']) {
+      signingKey = hmac(signingKey, part)
+    }
+    const signature = crypto.createHmac('sha256', signingKey).update(stringToSign).digest('hex')
+
+    return `${origin}${canonicalPath}?${canonicalQuery}&X-Amz-Signature=${signature}`
   }
 
   /**
