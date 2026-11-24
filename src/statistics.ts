@@ -1,5 +1,6 @@
 import { Logger } from 'koishi'
 import { InteractionStatistics, ParsedMessage } from './types'
+import { isNoticeEntry } from './poke'
 
 export class StatisticsService {
   private logger: Logger
@@ -18,6 +19,8 @@ export class StatisticsService {
     for (const line of lines) {
       try {
         const record = JSON.parse(line)
+        // 戳一戳这类通知也记在同一个文件里，它不是发言，不进统计
+        if (isNoticeEntry(record)) continue
         messages.push({
           timestamp: record.timestamp,
           time: record.time,

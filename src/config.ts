@@ -18,6 +18,9 @@ export const ConfigSchema: Schema<Config> = Schema.object({
     includeAudio: Schema.boolean()
       .description('是否转存语音（原文件原样存到 audios/，不转码）')
       .default(true),
+    recordPoke: Schema.boolean()
+      .description('是否记下群里的戳一戳（谁戳了谁；记在聊天记录文件里，多一个 notice 字段，不算发言）')
+      .default(true),
     autoUploadTime: Schema.string()
       .description('自动上传时间（HH:mm格式，如：02:00）')
       .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)

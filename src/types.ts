@@ -51,6 +51,7 @@ export interface Config {
     includeImages: boolean   // 是否包含图片链接
     includeForwardMedia?: boolean // 是否转存合并转发里的图片和视频（默认开）
     includeAudio?: boolean   // 是否转存语音（默认开）
+    recordPoke?: boolean     // 是否记下群里的戳一戳（默认开）
     maxFileSize: number      // 单个日志文件最大大小(MB)
     autoUploadTime: string   // 自动上传时间（HH:mm格式）
     retentionDays: number    // 本地文件保留天数
