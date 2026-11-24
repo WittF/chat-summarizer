@@ -1,10 +1,11 @@
 import * as crypto from 'crypto'
-import { S3Client } from '@aws-sdk/client-s3'
+import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import axios from 'axios'
 import { getDateStringInUTC8, handleError, delay } from './utils'
+import { contentTypeForExt, forwardMediaKey, sniffAudioExt, sniffExt } from './media-extra'
 
 export interface S3Config {
   region: string
@@ -330,6 +331,104 @@ export class S3Uploader {
         success: false,
         error: handleError(error, '下载或上传视频失败')
       }
+    }
+  }
+
+  /**
+   * 加上 pathPrefix 之后的完整键名（和 uploadBuffer 里的拼法一致）
+   */
+  private withPrefix(key: string): string {
+    const cleanPrefix = (this.config.pathPrefix || '').replace(/^\/+|\/+$/g, '')
+    return cleanPrefix ? `${cleanPrefix}/${key}` : key
+  }
+
+  /**
+   * 桶里有没有这个对象。有返回大小，没有返回 -1；查不了（网络、权限）抛错。
+   */
+  public async objectSize(key: string): Promise<number> {
+    try {
+      const head = await this.client.send(new HeadObjectCommand({ Bucket: this.config.bucket, Key: this.withPrefix(key) }))
+      return head.ContentLength ?? 0
+    } catch (error: any) {
+      const status = error?.$metadata?.httpStatusCode
+      if (status === 404 || error?.name === 'NotFound' || error?.name === 'NoSuchKey') {
+        return -1
+      }
+      throw error
+    }
+  }
+
+  /**
+   * 合并转发里的图片 / 视频：按内容寻址存放（forward-media/<md5 前两位>/<md5>.<扩展名>）。
+   * 桶里已经有同一个文件就不再下载、不覆盖，直接返回它的键名。
+   * md5 取自片段的文件名；文件名不是 md5 形状时用下载内容现算。
+   */
+  public async uploadForwardMediaFromUrl(
+    url: string,
+    opts: { md5?: string | null; ext?: string | null; maxSize: number; timeout: number }
+  ): Promise<UploadResult> {
+    try {
+      if (opts.md5 && opts.ext) {
+        const key = forwardMediaKey(opts.md5, opts.ext)
+        const size = await this.objectSize(key)
+        if (size >= 0) {
+          return { success: true, key: this.withPrefix(key), url: this.generatePublicUrl(this.withPrefix(key)), fileSize: size }
+        }
+      }
+
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer' as const,
+        timeout: opts.timeout,
+        maxContentLength: opts.maxSize,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      })
+      if (!response.data) {
+        return { success: false, error: '下载失败：响应数据为空' }
+      }
+      const buffer = Buffer.from(response.data)
+      if (buffer.length > opts.maxSize) {
+        return { success: false, error: `文件过大: ${Math.round(buffer.length / 1024 / 1024)}MB > ${Math.round(opts.maxSize / 1024 / 1024)}MB` }
+      }
+
+      const md5 = opts.md5 || crypto.createHash('md5').update(buffer).digest('hex')
+      const ext = opts.ext || sniffExt(buffer)
+      const key = forwardMediaKey(md5, ext)
+      if (!(opts.md5 && opts.ext)) {
+        const size = await this.objectSize(key)
+        if (size >= 0) {
+          return { success: true, key: this.withPrefix(key), url: this.generatePublicUrl(this.withPrefix(key)), fileSize: size }
+        }
+      }
+      return await this.uploadBuffer(buffer, key, contentTypeForExt(ext))
+    } catch (error: any) {
+      return { success: false, error: handleError(error, '下载或上传转发媒体失败') }
+    }
+  }
+
+  /**
+   * 语音：下载原文件原样存（QQ 的语音是 SILK，扩展名按文件头定，不在这里转码）。
+   * keyBase 不带扩展名。
+   */
+  public async uploadAudioFromUrl(url: string, keyBase: string, fallbackExt: string = 'amr'): Promise<UploadResult> {
+    try {
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer' as const,
+        timeout: 60000,
+        maxContentLength: 50 * 1024 * 1024,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      })
+      if (!response.data) {
+        return { success: false, error: '下载语音失败：响应数据为空' }
+      }
+      const buffer = Buffer.from(response.data)
+      const ext = sniffAudioExt(buffer) || fallbackExt
+      return await this.uploadBuffer(buffer, `${keyBase}.${ext}`, contentTypeForExt(ext))
+    } catch (error: any) {
+      return { success: false, error: handleError(error, '下载或上传语音失败') }
     }
   }
 

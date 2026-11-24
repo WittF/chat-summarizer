@@ -21,6 +21,36 @@ import {
   replaceImageUrl,
   buildStoredImageElement
 } from './utils'
+import {
+  AttemptResult,
+  NestedMediaRef,
+  collectForwardMedia,
+  collectTopLevelAudio,
+  extractReplyId,
+  findRefreshedUrl,
+  pickRefreshedTopLevelUrl,
+  runPool,
+  uploadWithRetry
+} from './media-extra'
+
+// 跟着每条消息一起写进 JSONL 的补充字段（不进数据库）
+interface MessageExtras {
+  replyTo?: string        // 被回复消息的 id
+  replyToUser?: string    // 被回复的人
+  onebot?: Record<string, string>  // 适配器给的原始序号（message_seq / real_seq / real_id）
+  rawTypes?: string[]     // 元素为空时：原始事件里各片段的类型
+  rawMessage?: string     // 元素为空时：原始事件的 raw_message（截到 2000 字）
+}
+
+// 转存用到的机器人上下文：失败重试前向机器人要新签名的地址
+interface MediaContext {
+  bot: any
+  platform: string
+  guildId?: string
+  messageId: string
+}
+
+const FAILED_MEDIA_SUFFIX = '.failed-media.jsonl'
 
 export { name, inject }
 export { ConfigSchema as Config }
@@ -136,8 +166,26 @@ export function apply(ctx: Context, config: Config) {
     return replyPrefix + content
   }
 
+  // 一行 JSONL 的内容：数据库里那条记录 + 只进文件的补充字段
+  const buildLogEntry = (record: ChatRecord, extras?: MessageExtras) => ({
+    timestamp: record.timestamp,
+    time: formatDateInUTC8(record.timestamp),
+    messageId: record.messageId,
+    guildId: record.guildId,
+    channelId: record.channelId,
+    userId: record.userId,
+    username: record.username,
+    content: record.content,
+    messageType: record.messageType,
+    imageUrls: safeJsonParse(record.imageUrls, []),
+    fileUrls: safeJsonParse(record.fileUrls, []),
+    videoUrls: safeJsonParse(record.videoUrls, []),
+    originalElements: safeJsonParse(record.originalElements, []),
+    ...(extras || {})
+  })
+
   // 保存消息到本地文件
-  const saveMessageToLocalFile = async (record: ChatRecord): Promise<void> => {
+  const saveMessageToLocalFile = async (record: ChatRecord, extras?: MessageExtras): Promise<void> => {
     try {
       const dateStr = getDateStringInUTC8(record.timestamp)
       const groupKey = record.guildId || 'private'
@@ -146,21 +194,7 @@ export function apply(ctx: Context, config: Config) {
       const fileName = `${groupKey}_${dateStr}.jsonl`
       const filePath = path.join(logDir, fileName)
       
-      const logEntry = {
-        timestamp: record.timestamp,
-        time: formatDateInUTC8(record.timestamp),
-        messageId: record.messageId,
-        guildId: record.guildId,
-        channelId: record.channelId,
-        userId: record.userId,
-        username: record.username,
-        content: record.content,
-        messageType: record.messageType,
-        imageUrls: safeJsonParse(record.imageUrls, []),
-        fileUrls: safeJsonParse(record.fileUrls, []),
-        videoUrls: safeJsonParse(record.videoUrls, []),
-        originalElements: safeJsonParse(record.originalElements, [])
-      }
+      const logEntry = buildLogEntry(record, extras)
       
       const logLine = safeJsonStringify(logEntry) + '\n'
       
@@ -178,11 +212,11 @@ export function apply(ctx: Context, config: Config) {
   }
 
   // 上传图片到S3
-  const uploadImageToS3 = async (imageUrl: string, messageId: string, guildId?: string): Promise<string | null> => {
+  const uploadImageToS3 = async (imageUrl: string, messageId: string, guildId?: string): Promise<{ url: string | null; error?: string }> => {
     const s3Uploader = s3Service.getUploader()
     if (!s3Uploader) {
       logger.error('S3上传器未初始化')
-      return null
+      return { url: null, error: 'S3上传器未初始化' }
     }
 
     try {
@@ -209,23 +243,23 @@ export function apply(ctx: Context, config: Config) {
           logger.info(`✅ 图片上传成功: ${finalUrl}`)
         }
         
-        return finalUrl  // 返回替换后的URL
+        return { url: finalUrl }  // 返回替换后的URL
       } else {
-        logger.error(`❌ 图片上传失败: ${result.error}`)
-        return null
+        logger.error(`❌ 图片上传失败 (消息 ${messageId}): ${result.error}`)
+        return { url: null, error: result.error }
       }
     } catch (error: any) {
       logger.error('❌ 上传图片时发生错误', error)
-      return null
+      return { url: null, error: error?.message || '上传时发生错误' }
     }
   }
 
   // 上传文件到S3
-  const uploadFileToS3 = async (fileUrl: string, fileName: string, messageId: string, guildId?: string): Promise<string | null> => {
+  const uploadFileToS3 = async (fileUrl: string, fileName: string, messageId: string, guildId?: string): Promise<{ url: string | null; error?: string }> => {
     const s3Uploader = s3Service.getUploader()
     if (!s3Uploader) {
       logger.error('S3上传器未初始化')
-      return null
+      return { url: null, error: 'S3上传器未初始化' }
     }
 
     try {
@@ -253,23 +287,23 @@ export function apply(ctx: Context, config: Config) {
           logger.info(`✅ 文件上传成功: ${fileName} -> ${finalUrl}`)
         }
         
-        return finalUrl  // 返回替换后的URL
+        return { url: finalUrl }  // 返回替换后的URL
       } else {
-        logger.error(`❌ 文件上传失败: ${fileName} - ${result.error}`)
-        return null
+        logger.error(`❌ 文件上传失败 (消息 ${messageId}): ${fileName} - ${result.error}`)
+        return { url: null, error: result.error }
       }
     } catch (error: any) {
       logger.error(`❌ 上传文件时发生错误: ${fileName}`, error)
-      return null
+      return { url: null, error: error?.message || '上传时发生错误' }
     }
   }
 
   // 上传视频到S3
-  const uploadVideoToS3 = async (videoUrl: string, fileName: string, messageId: string, guildId?: string): Promise<string | null> => {
+  const uploadVideoToS3 = async (videoUrl: string, fileName: string, messageId: string, guildId?: string): Promise<{ url: string | null; error?: string }> => {
     const s3Uploader = s3Service.getUploader()
     if (!s3Uploader) {
       logger.error('S3上传器未初始化')
-      return null
+      return { url: null, error: 'S3上传器未初始化' }
     }
 
     try {
@@ -297,159 +331,379 @@ export function apply(ctx: Context, config: Config) {
           logger.info(`✅ 视频上传成功: ${fileName} -> ${finalUrl}`)
         }
         
-        return finalUrl  // 返回替换后的URL
+        return { url: finalUrl }  // 返回替换后的URL
       } else {
-        logger.error(`❌ 视频上传失败: ${fileName} - ${result.error}`)
-        return null
+        logger.error(`❌ 视频上传失败 (消息 ${messageId}): ${fileName} - ${result.error}`)
+        return { url: null, error: result.error }
       }
     } catch (error: any) {
       logger.error(`❌ 上传视频时发生错误: ${fileName}`, error)
+      return { url: null, error: error?.message || '上传时发生错误' }
+    }
+  }
+
+  // ===== 媒体转存：第一轮 → 写回记录 → 失败的重试 → 还不行记进失败清单 =====
+
+  // 重试前各等多久：30 秒、2 分钟、10 分钟
+  const RETRY_DELAYS_MS = [30_000, 120_000, 600_000]
+  // 一条消息里（主要是大的合并转发）同时转存几个
+  const MEDIA_CONCURRENCY = 4
+  const FORWARD_IMAGE_MAX_BYTES = 50 * 1024 * 1024
+  const FORWARD_VIDEO_MAX_BYTES = 200 * 1024 * 1024
+  const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+  // 还没跑完第一轮转存的消息数。每天传 JSONL 之前等它归零（最多等两分钟），
+  // 免得传上去的那份里留着腾讯地址而文件其实随后就进了桶。
+  let firstPassInflight = 0
+
+  // 向机器人发一个 OneBot 原始请求；不是 onebot 平台、适配器没这个口子、或请求失败都返回 null
+  const rawBotRequest = async (mc: MediaContext, action: string, params: Record<string, any>): Promise<any | null> => {
+    try {
+      const internal = mc.bot?.internal
+      if (mc.platform !== 'onebot' || typeof internal?._request !== 'function') {
+        return null
+      }
+      const response = await internal._request(action, params)
+      return response && response.retcode === 0 ? response.data : null
+    } catch {
       return null
     }
   }
 
-  // 异步处理图片、文件和视频上传
+  // 腾讯的媒体地址带签名、不到一天就失效。重试隔得久了要先让机器人把消息重取一遍拿新地址。
+  // 同一条消息 20 秒内只重取一次，多个失败项共用结果。
+  const createRefresher = (mc: MediaContext) => {
+    const FRESH_MS = 20_000
+    let top: { at: number; segments: Promise<any[] | null> } | null = null
+    const forwards = new Map<string, { at: number; refs: Promise<NestedMediaRef[]> }>()
+
+    return {
+      // 顶层的图片 / 视频 / 文件 / 语音：get_msg（消息还在机器人最近消息的缓存里才取得到）
+      top: async (rawType: string, index: number, expectedCount: number, originalUrl: string): Promise<string | null> => {
+        if (!top || Date.now() - top.at > FRESH_MS) {
+          const id = /^-?\d+$/.test(mc.messageId) ? Number(mc.messageId) : mc.messageId
+          top = {
+            at: Date.now(),
+            segments: rawBotRequest(mc, 'get_msg', { message_id: id })
+              .then(data => (Array.isArray(data?.message) ? data.message : null))
+          }
+        }
+        const segments = await top.segments
+        return segments ? pickRefreshedTopLevelUrl(segments, rawType, index, expectedCount, originalUrl) : null
+      },
+
+      // 合并转发里的：用转发元素的 id 当起始消息取 1 条群历史消息（NapCat 实测可行，不依赖缓存）
+      forward: async (ref: NestedMediaRef): Promise<string | null> => {
+        if (!mc.guildId || !ref.forwardId) {
+          return null
+        }
+        let entry = forwards.get(ref.forwardId)
+        if (!entry || Date.now() - entry.at > FRESH_MS) {
+          entry = {
+            at: Date.now(),
+            refs: rawBotRequest(mc, 'get_group_msg_history', {
+              group_id: mc.guildId,
+              message_seq: ref.forwardId,
+              count: 1,
+              parse_mult_msg: true
+            }).then(data => {
+              const first = Array.isArray(data?.messages) ? data.messages[0] : null
+              const segments: any[] = Array.isArray(first?.message) ? first.message : []
+              const forward = segments.find(seg => seg?.type === 'forward' && String(seg?.data?.id) === ref.forwardId)
+              return forward ? collectForwardMedia([{ type: 'forward', attrs: forward.data }]) : []
+            })
+          }
+          forwards.set(ref.forwardId, entry)
+        }
+        return findRefreshedUrl(await entry.refs, ref)
+      }
+    }
+  }
+
+  // 最终还是没存下来的，往当天的失败清单里记一行（不记地址：地址带签名而且很快失效）
+  const recordMediaFailure = async (record: ChatRecord, entry: Record<string, any>): Promise<void> => {
+    logger.warn(`媒体转存最终失败 (消息 ${record.messageId}) ${entry.where}/${entry.kind}${entry.path ? ` ${entry.path}` : ''}，试了 ${entry.attempts} 次: ${entry.error}`)
+    try {
+      const dateStr = getDateStringInUTC8(record.timestamp)
+      const groupKey = record.guildId || 'private'
+      const filePath = path.join(getStorageDir('data'), `${groupKey}_${dateStr}${FAILED_MEDIA_SUFFIX}`)
+      const line = safeJsonStringify({
+        time: Date.now(),
+        messageId: record.messageId,
+        guildId: record.guildId,
+        timestamp: record.timestamp,
+        ...entry
+      }) + '\n'
+      await fileWriter.safeAppend(filePath, line)
+    } catch (error: any) {
+      logger.error('写入媒体转存失败清单时出错', error)
+    }
+  }
+
+  interface MediaJob {
+    where: 'top' | 'forward' | 'audio'
+    kind: string
+    url: string
+    describe: Record<string, any>   // 写进失败清单的定位信息
+    attempt: (url: string) => Promise<AttemptResult>
+    refresh: () => Promise<string | null>
+    onSuccess: (result: AttemptResult) => void
+    attempts: number
+    error?: string
+  }
+
+  // 异步处理图片、文件、视频、语音，以及合并转发里的图片和视频
   const processFileUploadsAsync = async (
-    imageUrls: string[], 
+    imageUrls: string[],
     fileUrls: Array<{ url: string; fileName: string }>,
     videoUrls: Array<{ url: string; fileName: string }>,
-    messageId: string, 
+    messageId: string,
     guildId: string | undefined,
-    originalRecord: ChatRecord
+    originalRecord: ChatRecord,
+    extras: MessageExtras,
+    mc: MediaContext
   ): Promise<void> => {
-    if (imageUrls.length === 0 && fileUrls.length === 0 && videoUrls.length === 0) {
+    // 在元素的副本上找转发里的媒体和语音；转存成功后把 s3Key 写在副本上，最后整份写回记录。
+    // 原来的字段（腾讯地址、文件名）都不动，只多一个 s3Key。
+    const elements: any[] = safeJsonParse(originalRecord.originalElements, [])
+    const nestedRefs = config.chatLog.includeForwardMedia !== false
+      ? collectForwardMedia(elements).filter(ref => !ref.data.s3Key)
+      : []
+    const audioRefs = config.chatLog.includeAudio !== false
+      ? collectTopLevelAudio(elements).filter(ref => !ref.attrs.s3Key)
+      : []
+
+    if (imageUrls.length === 0 && fileUrls.length === 0 && videoUrls.length === 0 && nestedRefs.length === 0 && audioRefs.length === 0) {
+      return
+    }
+
+    const s3Uploader = s3Service.getUploader()
+    if (!s3Uploader) {
+      logger.error('S3上传器未初始化')
+      return
+    }
+
+    const urlMapping: Record<string, string> = {}
+    let elementsTouched = false
+    const refresher = createRefresher(mc)
+
+    // 给单次尝试加总时限（下载 + 传桶），超时算一次失败
+    const withTimeout = (
+      upload: Promise<{ url: string | null; error?: string }>,
+      ms: number,
+      label: string
+    ): Promise<AttemptResult> => Promise.race([
+      upload.then(result => (result.url ? { ok: true, url: result.url } : { ok: false, error: result.error || `${label}上传失败` })),
+      sleep(ms).then(() => ({ ok: false, error: `${label}转存超时` }))
+    ])
+
+    const jobs: MediaJob[] = []
+
+    imageUrls.forEach((imageUrl, index) => {
+      jobs.push({
+        where: 'top', kind: 'image', url: imageUrl, describe: { index }, attempts: 0,
+        attempt: (url) => withTimeout(uploadImageToS3(url, messageId, guildId), 120000, '图片'),  // 2分钟
+        refresh: () => refresher.top('image', index, imageUrls.length, imageUrl),
+        onSuccess: (result) => { urlMapping[imageUrl] = result.url! }
+      })
+    })
+
+    fileUrls.forEach((fileInfo, index) => {
+      jobs.push({
+        where: 'top', kind: 'file', url: fileInfo.url, describe: { index, file: fileInfo.fileName }, attempts: 0,
+        attempt: (url) => withTimeout(uploadFileToS3(url, fileInfo.fileName, messageId, guildId), 180000, '文件'),  // 3分钟
+        refresh: () => refresher.top('file', index, fileUrls.length, fileInfo.url),
+        onSuccess: (result) => { urlMapping[fileInfo.url] = result.url! }
+      })
+    })
+
+    videoUrls.forEach((videoInfo, index) => {
+      jobs.push({
+        where: 'top', kind: 'video', url: videoInfo.url, describe: { index, file: videoInfo.fileName }, attempts: 0,
+        attempt: (url) => withTimeout(uploadVideoToS3(url, videoInfo.fileName, messageId, guildId), 300000, '视频'),  // 5分钟
+        refresh: () => refresher.top('video', index, videoUrls.length, videoInfo.url),
+        onSuccess: (result) => { urlMapping[videoInfo.url] = result.url! }
+      })
+    })
+
+    for (const ref of nestedRefs) {
+      const isVideo = ref.kind === 'video'
+      jobs.push({
+        where: 'forward', kind: ref.kind, url: ref.url,
+        describe: { forwardId: ref.forwardId, path: ref.path, file: ref.file }, attempts: 0,
+        attempt: async (url) => {
+          const result = await s3Uploader.uploadForwardMediaFromUrl(url, {
+            md5: ref.md5,
+            ext: ref.ext,
+            maxSize: isVideo ? FORWARD_VIDEO_MAX_BYTES : FORWARD_IMAGE_MAX_BYTES,
+            timeout: isVideo ? 300000 : 60000
+          })
+          return result.success && result.key
+            ? { ok: true, key: result.key, size: result.fileSize }
+            : { ok: false, error: result.error || '转发媒体上传失败' }
+        },
+        refresh: () => refresher.forward(ref),
+        onSuccess: (result) => {
+          ref.data.s3Key = result.key
+          elementsTouched = true
+        }
+      })
+    }
+
+    for (const ref of audioRefs) {
+      // 语音按消息的日期放，路径推得出来：audios/<消息日期>/<群>/<消息 id>.<扩展名>
+      const keyBase = `audios/${getDateStringInUTC8(originalRecord.timestamp)}/${guildId || 'private'}/${messageId}${ref.index > 0 ? `_${ref.index}` : ''}`
+      jobs.push({
+        where: 'audio', kind: 'audio', url: ref.url, describe: { index: ref.index, file: ref.file }, attempts: 0,
+        attempt: async (url) => {
+          const result = await s3Uploader.uploadAudioFromUrl(url, keyBase)
+          return result.success && result.key
+            ? { ok: true, key: result.key, size: result.fileSize }
+            : { ok: false, error: result.error || '语音上传失败' }
+        },
+        refresh: () => refresher.top('record', ref.index, audioRefs.length, ref.url),
+        onSuccess: (result) => {
+          ref.attrs.s3Key = result.key
+          elementsTouched = true
+        }
+      })
+    }
+
+    // 把目前为止转存成功的写回数据库和本地 JSONL
+    const writeBack = async (): Promise<void> => {
+      if (Object.keys(urlMapping).length === 0 && !elementsTouched) {
+        return
+      }
+
+      // 更新content中的链接
+      let updatedContent = originalRecord.content
+      Object.entries(urlMapping).forEach(([originalUrl, newUrl]) => {
+        updatedContent = updatedContent.replace(originalUrl, newUrl)
+      })
+
+      const updateData: Partial<ChatRecord> = {
+        content: updatedContent
+      }
+
+      // 列表保持原来的个数和顺序：存下的换成桶地址，没存下的留着原样
+      if (imageUrls.some(url => urlMapping[url])) {
+        updateData.imageUrls = safeJsonStringify(imageUrls.map(url => urlMapping[url] || url))
+      }
+      if (fileUrls.some(info => urlMapping[info.url])) {
+        updateData.fileUrls = safeJsonStringify(fileUrls.map(info => urlMapping[info.url] || info))
+      }
+      if (videoUrls.some(info => urlMapping[info.url])) {
+        updateData.videoUrls = safeJsonStringify(videoUrls.map(info => urlMapping[info.url] || info))
+      }
+      if (elementsTouched) {
+        updateData.originalElements = safeJsonStringify(elements)
+      }
+
+      await dbOps.updateChatRecord(messageId, updateData)
+
+      // 更新本地文件记录
+      await updateLocalFileRecord({ ...originalRecord, ...updateData }, extras)
+    }
+
+    const runJob = async (job: MediaJob, delays: number[], previousError?: string): Promise<void> => {
+      const outcome = await uploadWithRetry(job.url, {
+        attempt: job.attempt,
+        refresh: job.refresh,
+        delays,
+        sleep,
+        previousError
+      })
+      job.attempts += outcome.attempts
+      if (outcome.ok) {
+        job.error = undefined
+        job.onSuccess(outcome)
+      } else {
+        job.error = outcome.error || '转存失败'
+      }
+    }
+
+    // 第一轮：每个都试一次。顶层的照旧同时跑，转发里的限并发。
+    firstPassInflight++
+    try {
+      const topJobs = jobs.filter(job => job.where !== 'forward')
+      const nestedJobs = jobs.filter(job => job.where === 'forward')
+      await Promise.all([
+        Promise.all(topJobs.map(job => runJob(job, []))),
+        runPool(nestedJobs, MEDIA_CONCURRENCY, job => runJob(job, []))
+      ])
+      await writeBack()
+    } catch (error: any) {
+      logger.error('批量上传文件时发生错误', error)
+    } finally {
+      firstPassInflight--
+    }
+
+    // 第二轮：只重试第一轮失败的
+    const failedJobs = jobs.filter(job => job.error)
+    if (failedJobs.length === 0) {
       return
     }
 
     try {
-      const urlMapping: Record<string, string> = {}
-      const successfulImageUploads: string[] = []
-      const successfulFileUploads: string[] = []
-      const successfulVideoUploads: string[] = []
-
-      // 处理图片上传（添加超时控制）
-      if (imageUrls.length > 0) {
-        const imageUploadPromises = imageUrls.map(imageUrl => {
-          // 🔑 关键修复：为每个上传添加超时控制
-          const uploadPromise = uploadImageToS3(imageUrl, messageId, guildId)
-          const timeoutPromise = new Promise<string | null>((resolve) => {
-            setTimeout(() => {
-              if (config.debug) {
-                logger.warn(`图片上传超时: ${imageUrl}`)
-              }
-              resolve(null)
-            }, 120000) // 2分钟超时
-          })
-          
-          return Promise.race([uploadPromise, timeoutPromise])
-        })
-        
-        const imageUploadResults = await Promise.allSettled(imageUploadPromises)
-        
-        imageUploadResults.forEach((result, index) => {
-          if (result.status === 'fulfilled' && result.value) {
-            successfulImageUploads.push(result.value)
-            urlMapping[imageUrls[index]] = result.value
-          }
-        })
-      }
-
-      // 处理文件上传（添加超时控制）
-      if (fileUrls.length > 0) {
-        const fileUploadPromises = fileUrls.map(fileInfo => {
-          // 🔑 关键修复：为每个上传添加超时控制
-          const uploadPromise = uploadFileToS3(fileInfo.url, fileInfo.fileName, messageId, guildId)
-          const timeoutPromise = new Promise<string | null>((resolve) => {
-            setTimeout(() => {
-              if (config.debug) {
-                logger.warn(`文件上传超时: ${fileInfo.fileName}`)
-              }
-              resolve(null)
-            }, 180000) // 3分钟超时，文件可能更大
-          })
-          
-          return Promise.race([uploadPromise, timeoutPromise])
-        })
-        
-        const fileUploadResults = await Promise.allSettled(fileUploadPromises)
-        
-        fileUploadResults.forEach((result, index) => {
-          if (result.status === 'fulfilled' && result.value) {
-            successfulFileUploads.push(result.value)
-            urlMapping[fileUrls[index].url] = result.value
-          }
-        })
-      }
-
-      // 处理视频上传（添加超时控制）
-      if (videoUrls.length > 0) {
-        const videoUploadPromises = videoUrls.map(videoInfo => {
-          // 🔑 关键修复：为每个上传添加超时控制
-          const uploadPromise = uploadVideoToS3(videoInfo.url, videoInfo.fileName, messageId, guildId)
-          const timeoutPromise = new Promise<string | null>((resolve) => {
-            setTimeout(() => {
-              if (config.debug) {
-                logger.warn(`视频上传超时: ${videoInfo.fileName}`)
-              }
-              resolve(null)
-            }, 300000) // 5分钟超时，视频文件通常更大
-          })
-          
-          return Promise.race([uploadPromise, timeoutPromise])
-        })
-        
-        const videoUploadResults = await Promise.allSettled(videoUploadPromises)
-        
-        videoUploadResults.forEach((result, index) => {
-          if (result.status === 'fulfilled' && result.value) {
-            successfulVideoUploads.push(result.value)
-            urlMapping[videoUrls[index].url] = result.value
-          }
-        })
-      }
-
-      // 更新数据库记录
-      if (successfulImageUploads.length > 0 || successfulFileUploads.length > 0 || successfulVideoUploads.length > 0) {
-        // 更新content中的链接
-        let updatedContent = originalRecord.content
-        Object.entries(urlMapping).forEach(([originalUrl, newUrl]) => {
-          updatedContent = updatedContent.replace(originalUrl, newUrl)
-        })
-
-        const updateData: Partial<ChatRecord> = {
-          content: updatedContent
-        }
-
-        if (successfulImageUploads.length > 0) {
-          updateData.imageUrls = safeJsonStringify(successfulImageUploads)
-        }
-
-        if (successfulFileUploads.length > 0) {
-          updateData.fileUrls = safeJsonStringify(successfulFileUploads)
-        }
-
-        if (successfulVideoUploads.length > 0) {
-          updateData.videoUrls = safeJsonStringify(successfulVideoUploads)
-        }
-
-        await dbOps.updateChatRecord(messageId, updateData)
-        
-        // 更新本地文件记录
-        await updateLocalFileRecord({
-          ...originalRecord,
-          content: updatedContent,
-          imageUrls: successfulImageUploads.length > 0 ? safeJsonStringify(successfulImageUploads) : originalRecord.imageUrls,
-          fileUrls: successfulFileUploads.length > 0 ? safeJsonStringify(successfulFileUploads) : originalRecord.fileUrls,
-          videoUrls: successfulVideoUploads.length > 0 ? safeJsonStringify(successfulVideoUploads) : originalRecord.videoUrls
-        })
+      await runPool(failedJobs, MEDIA_CONCURRENCY, job => runJob(job, RETRY_DELAYS_MS, job.error))
+      if (failedJobs.some(job => !job.error)) {
+        await writeBack()
       }
     } catch (error: any) {
-      logger.error('批量上传文件时发生错误', error)
+      logger.error('重试媒体转存时发生错误', error)
+    }
+
+    for (const job of failedJobs) {
+      if (job.error) {
+        await recordMediaFailure(originalRecord, {
+          where: job.where,
+          kind: job.kind,
+          ...job.describe,
+          attempts: job.attempts,
+          error: job.error
+        })
+      }
+    }
+  }
+
+  // 把最近两天的失败清单传到桶里（failed-media/<日期>/guild_<群>.jsonl）。
+  // 重试最长要十几分钟，前一天的清单过了零点还可能追加，所以每次连前一天的一起重传。
+  const uploadFailedMediaLists = async (): Promise<void> => {
+    const s3Uploader = s3Service.getUploader()
+    if (!s3Uploader) {
+      return
+    }
+    try {
+      const dataDir = getStorageDir('data')
+      const files = await fs.readdir(dataDir).catch(() => [] as string[])
+      const cutoff = Date.now() - 2 * 24 * 60 * 60 * 1000
+      for (const fileName of files) {
+        if (!fileName.endsWith(FAILED_MEDIA_SUFFIX)) {
+          continue
+        }
+        const match = /^(.+)_(\d{4}-\d{2}-\d{2})$/.exec(fileName.slice(0, -FAILED_MEDIA_SUFFIX.length))
+        if (!match) {
+          continue
+        }
+        const filePath = path.join(dataDir, fileName)
+        const stats = await fs.stat(filePath).catch(() => null)
+        if (!stats || stats.size === 0 || stats.mtimeMs < cutoff) {
+          continue
+        }
+        const [, groupKey, dateStr] = match
+        const s3Key = `failed-media/${dateStr}/${groupKey === 'private' ? 'private' : `guild_${groupKey}`}.jsonl`
+        const result = await s3Uploader.uploadFile(filePath, s3Key, 'application/x-ndjson; charset=utf-8')
+        if (!result.success) {
+          logger.error(`媒体转存失败清单上传失败: ${fileName} - ${result.error}`)
+        }
+      }
+    } catch (error: any) {
+      logger.error('上传媒体转存失败清单时发生错误', error)
     }
   }
 
   // 更新本地文件记录
-  const updateLocalFileRecord = async (record: ChatRecord): Promise<void> => {
+  const updateLocalFileRecord = async (record: ChatRecord, extras?: MessageExtras): Promise<void> => {
     try {
       const dateStr = getDateStringInUTC8(record.timestamp)
       const groupKey = record.guildId || 'private'
@@ -457,21 +711,7 @@ export function apply(ctx: Context, config: Config) {
       const filePath = path.join(getStorageDir('data'), fileName)
       
       // 构建更新后的记录
-      const updatedRecord = {
-        timestamp: record.timestamp,
-        time: formatDateInUTC8(record.timestamp),
-        messageId: record.messageId,
-        guildId: record.guildId,
-        channelId: record.channelId,
-        userId: record.userId,
-        username: record.username,
-        content: record.content,
-        messageType: record.messageType,
-        imageUrls: safeJsonParse(record.imageUrls, []),
-        fileUrls: safeJsonParse(record.fileUrls, []),
-        videoUrls: safeJsonParse(record.videoUrls, []),
-        originalElements: safeJsonParse(record.originalElements, [])
-      }
+      const updatedRecord = buildLogEntry(record, extras)
       
       const updatedLine = safeJsonStringify(updatedRecord) + '\n'
       
@@ -845,7 +1085,12 @@ export function apply(ctx: Context, config: Config) {
     }
 
     uploadScheduler = setTimeout(async () => {
+      // 等还在跑第一轮转存的消息跑完（最多两分钟），再传昨天的 JSONL
+      for (let waited = 0; firstPassInflight > 0 && waited < 120; waited++) {
+        await sleep(1000)
+      }
       await executeAutoUpload()
+      await uploadFailedMediaLists()
       // 执行数据库清理
       await executeDatabaseCleanup()
       // 设置下一次执行
@@ -1556,6 +1801,47 @@ export function apply(ctx: Context, config: Config) {
     }
   }
 
+  // 从会话里取只进 JSONL 的补充字段；取不到就留空，绝不影响消息入库
+  const buildMessageExtras = (session: Session): MessageExtras => {
+    const extras: MessageExtras = {}
+    try {
+      // OneBot 适配器把原始事件挂在 session.event._data 上
+      const raw: any = (session.event as any)?._data
+      const quote: any = session.quote
+      // 适配器取不到被回复的消息时 quote 是空的，这时退回原始事件里的 reply 片段
+      const replyTo = quote?.messageId || quote?.id || extractReplyId(raw?.message)
+      if (replyTo) {
+        extras.replyTo = String(replyTo)
+      }
+      if (quote?.user?.id) {
+        extras.replyToUser = messageService.normalizeUserId(String(quote.user.id))
+      }
+      if (raw && typeof raw === 'object') {
+        const onebot: Record<string, string> = {}
+        for (const [from, to] of [['message_seq', 'messageSeq'], ['real_seq', 'realSeq'], ['real_id', 'realId']]) {
+          if (raw[from] !== undefined && raw[from] !== null && raw[from] !== '') {
+            onebot[to] = String(raw[from])
+          }
+        }
+        if (Object.keys(onebot).length > 0) {
+          extras.onebot = onebot
+        }
+        // 适配器一个元素都没解析出来的消息：留下原始片段的类型和 raw_message，以后好查是什么
+        if (!session.elements || session.elements.length === 0) {
+          if (Array.isArray(raw.message)) {
+            extras.rawTypes = raw.message.map((segment: any) => String(segment?.type))
+          }
+          if (typeof raw.raw_message === 'string' && raw.raw_message) {
+            extras.rawMessage = raw.raw_message.slice(0, 2000)
+          }
+        }
+      }
+    } catch {
+      // 补充字段是锦上添花，出错就不要
+    }
+    return extras
+  }
+
   // 主消息处理逻辑
   ctx.on('message', async (session: Session) => {
     if (!shouldMonitorMessage(session)) {
@@ -1571,6 +1857,7 @@ export function apply(ctx: Context, config: Config) {
       const channelId = session.channelId || session.userId
 
       const processed = messageService.processElements(session.elements)
+      const extras = buildMessageExtras(session)
       
       let content = processed.content
       content = await addReplyPrefix(content, session)
@@ -1595,13 +1882,15 @@ export function apply(ctx: Context, config: Config) {
       await dbOps.createChatRecord(record)
 
       // 保存到本地文件
-      await saveMessageToLocalFile(record)
+      await saveMessageToLocalFile(record, extras)
 
-      // 异步处理图片、文件和视频上传（不等待，避免阻塞消息处理）
-      if (processed.imageUrls.length > 0 || processed.fileUrls.length > 0 || processed.videoUrls.length > 0) {
+      // 异步处理图片、文件、视频、语音和合并转发里的媒体（不等待，避免阻塞消息处理）
+      const hasNestedOrAudio = (session.elements || []).some(element => element.type === 'forward' || element.type === 'audio')
+      if (processed.imageUrls.length > 0 || processed.fileUrls.length > 0 || processed.videoUrls.length > 0 || hasNestedOrAudio) {
+        const mediaContext: MediaContext = { bot: session.bot, platform: session.platform, guildId, messageId }
         // 🔑 关键修复：使用 Promise.resolve().then() 确保不阻塞，并捕获错误
         Promise.resolve().then(() => 
-          processFileUploadsAsync(processed.imageUrls, processed.fileUrls, processed.videoUrls, messageId, guildId, record)
+          processFileUploadsAsync(processed.imageUrls, processed.fileUrls, processed.videoUrls, messageId, guildId, record, extras, mediaContext)
         ).catch(error => {
           logger.error('异步文件上传处理失败', error)
         })

@@ -21,7 +21,8 @@
     "build": "esbuild src/index.ts --bundle --outfile=lib/index.js --format=cjs --platform=node --external:koishi --external:@aws-sdk/client-s3 --external:@aws-sdk/lib-storage --external:axios --external:github-markdown-css && tsc",
     "clean": "rimraf lib tsconfig.tsbuildinfo",
     "prepublishOnly": "npm run clean && npm run build",
-    "semantic-release": "semantic-release"
+    "semantic-release": "semantic-release",
+    "test": "node --test test/"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.658.1",

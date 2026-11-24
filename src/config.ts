@@ -12,6 +12,12 @@ export const ConfigSchema: Schema<Config> = Schema.object({
     includeImages: Schema.boolean()
       .description('是否在聊天记录中包含图片链接')
       .default(true),
+    includeForwardMedia: Schema.boolean()
+      .description('是否转存合并转发里的图片和视频（按内容去重，存到 forward-media/）')
+      .default(true),
+    includeAudio: Schema.boolean()
+      .description('是否转存语音（原文件原样存到 audios/，不转码）')
+      .default(true),
     autoUploadTime: Schema.string()
       .description('自动上传时间（HH:mm格式，如：02:00）')
       .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)
