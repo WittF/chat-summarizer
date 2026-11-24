@@ -1,0 +1,35 @@
+# 推送 v* tag 时发布到 npm，使用 npm Trusted Publishing（OIDC），不需要 NPM_TOKEN
+# npmjs.com 包设置 → Trusted Publisher：GitHub Actions / WittF / chat-summarizer / publish.yml
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted Publishing 需要 npm >= 11.5.1
+      - run: npm install -g npm@11
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+
+      - run: npm install --no-audit --no-fund
+
+      - run: npm run build
+
+      - run: npm publish --provenance=false

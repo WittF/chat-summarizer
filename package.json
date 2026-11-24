@@ -1,13 +1,17 @@
 {
   "name": "koishi-plugin-chat-summarizer",
   "description": "Koishi聊天记录收集和上传插件",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
     "lib"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WittF/chat-summarizer.git"
+  },
   "keywords": [
     "koishi",
     "plugin",
