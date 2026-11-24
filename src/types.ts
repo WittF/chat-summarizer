@@ -49,6 +49,8 @@ export interface Config {
   chatLog: {
     enabled: boolean         // 是否启用聊天记录
     includeImages: boolean   // 是否包含图片链接
+    includeForwardMedia?: boolean // 是否转存合并转发里的图片和视频（默认开）
+    includeAudio?: boolean   // 是否转存语音（默认开）
     maxFileSize: number      // 单个日志文件最大大小(MB)
     autoUploadTime: string   // 自动上传时间（HH:mm格式）
     retentionDays: number    // 本地文件保留天数
