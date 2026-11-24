@@ -1,3 +1,9 @@
+## [1.22.0](https://github.com/WittF/chat-summarizer/compare/v1.21.0...v1.22.0) (2026-11-24)
+
+### ✨ 功能更新
+
+* 记下群里的戳一戳：谁戳了谁、什么时候，每次往当天的记录文件里追加一行（带 `notice: "poke"`，不进数据库、不算发言条数）；新开关 `chatLog.recordPoke`，默认开 ([afc6e01](https://github.com/WittF/chat-summarizer/commit/afc6e0158a0801cdbdbed6f562cf725a769b3a12))
+
 ## [1.21.0](https://github.com/WittF/chat-summarizer/compare/v1.20.0...v1.21.0) (2026-11-24)
 
 ### ✨ 功能更新
