@@ -19,7 +19,6 @@ import {
   getCurrentTimeInUTC8,
   safeJsonParse,
   safeJsonStringify,
-  replaceImageUrl,
   buildStoredImageElement
 } from './utils'
 import {
@@ -228,8 +227,7 @@ export function apply(ctx: Context, config: Config) {
       const result = await s3Uploader.uploadImageFromUrl(imageUrl, s3Key)
 
       if (result.success && result.url) {
-        // 替换URL域名
-        const finalUrl = replaceImageUrl(result.url)
+        const finalUrl = result.url
         
         const imageRecord: Omit<ImageRecord, 'id'> = {
           originalUrl: imageUrl,
@@ -271,8 +269,7 @@ export function apply(ctx: Context, config: Config) {
       const result = await s3Uploader.uploadFileFromUrl(fileUrl, s3Key, fileName)
 
       if (result.success && result.url) {
-        // 替换URL域名
-        const finalUrl = replaceImageUrl(result.url)
+        const finalUrl = result.url
         
         const fileRecord: Omit<FileRecord, 'id'> = {
           originalUrl: fileUrl,
@@ -315,8 +312,7 @@ export function apply(ctx: Context, config: Config) {
       const result = await s3Uploader.uploadVideoFromUrl(videoUrl, s3Key, fileName)
 
       if (result.success && result.url) {
-        // 替换URL域名
-        const finalUrl = replaceImageUrl(result.url)
+        const finalUrl = result.url
         
         const videoRecord: Omit<VideoRecord, 'id'> = {
           originalUrl: videoUrl,
