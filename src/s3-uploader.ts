@@ -6,6 +6,7 @@ import * as path from 'path'
 import axios from 'axios'
 import { getDateStringInUTC8, handleError, delay } from './utils'
 import { contentTypeForExt, forwardMediaKey, sniffAudioExt, sniffExt } from './media-extra'
+import { listAllObjects } from './s3-list'
 
 export interface S3Config {
   region: string
@@ -819,16 +820,16 @@ export class S3Uploader {
         }
       }
 
-      const command = new ListObjectsV2Command({
+      // 一次最多回 1000 个，要翻页才能列全
+      const contents = await listAllObjects(token => this.client.send(new ListObjectsV2Command({
         Bucket: this.config.bucket,
         Prefix: fullPrefix,
-        MaxKeys: 1000 // 限制返回数量，避免过多文件
-      })
+        MaxKeys: 1000,
+        ContinuationToken: token
+      })))
 
-      const response = await this.client.send(command)
-      
-      if (response.Contents) {
-        const files = response.Contents
+      if (contents.length > 0) {
+        const files = contents
           .filter(obj => obj.Key && obj.Size && obj.Size > 0) // 过滤掉空文件和目录
           .map(obj => obj.Key!)
           .filter(key => {

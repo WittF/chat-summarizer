@@ -261,10 +261,6 @@ export const CONSTANTS = {
   STORAGE_DIRS: {
     DATA: 'data'
   },
-  URL_REPLACEMENTS: {
-    OLD_DOMAIN: 'cn-sy1.rains3.com/qqmsg',
-    NEW_DOMAIN: 'qqmsg.pan.wittf.ink'
-  },
   FILE_SETTINGS: {
     ENCODING: 'utf8' as const,
     LINE_SEPARATOR: '\n',

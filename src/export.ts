@@ -2,7 +2,7 @@ import { Context } from 'koishi'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { S3Uploader } from './s3-uploader'
-import { safeJsonParse, getDateStringInUTC8, formatDateInUTC8, replaceImageUrl, formatDateSimple } from './utils'
+import { safeJsonParse, getDateStringInUTC8, formatDateInUTC8, formatDateSimple } from './utils'
 
 export interface ExportRequest {
   guildId?: string       // 群组ID，undefined表示私聊
@@ -451,7 +451,7 @@ export class ExportManager {
           // 生成带时效的下载地址（24 小时），存储桶不需要公开读
           const finalUrl = result.key
             ? this.s3Uploader.getPresignedUrl(result.key, 86400)
-            : replaceImageUrl(result.url)
+            : result.url
           
           const typeInfo = request.messageTypes && request.messageTypes.length > 0 
             ? `📋 消息类型: ${request.messageTypes.join(', ')}\n` 

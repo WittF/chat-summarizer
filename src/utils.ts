@@ -3,7 +3,6 @@
  */
 
 import { h } from 'koishi'
-import { CONSTANTS } from './config'
 import type { S3Uploader } from './s3-uploader'
 
 /**
@@ -160,17 +159,6 @@ export const processBatch = async <T, R>(
   
   return results
 }
-
-/**
- * 替换URL中的域名
- */
-export const replaceImageUrl = (originalUrl: string): string => {
-  // 替换域名
-  if (originalUrl.includes(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN)) {
-    return originalUrl.replace(CONSTANTS.URL_REPLACEMENTS.OLD_DOMAIN, CONSTANTS.URL_REPLACEMENTS.NEW_DOMAIN)
-  }
-  return originalUrl
-} 
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
